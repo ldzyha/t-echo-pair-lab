@@ -100,9 +100,13 @@ bool ButtonThread::initButton(const ButtonConfig &config)
 #else
     userButton.setDebounceMs(1);
 #endif
+    if (config.debounceMs >= 0)
+        userButton.setDebounceMs(config.debounceMs);
     userButton.setPressMs(_longPressTime);
 
-    if (screen) {
+    if (config.clickWindowMs) {
+        userButton.setClickMs(config.clickWindowMs);
+    } else if (screen) {
         userButton.setClickMs(20);
     } else {
         userButton.setClickMs(BUTTON_CLICK_MS);
@@ -225,7 +229,7 @@ int32_t ButtonThread::runOnce()
             break;
         }
 
-        case BUTTON_EVENT_DOUBLE_PRESSED: { // not wired in if screen detected
+        case BUTTON_EVENT_DOUBLE_PRESSED: {
             LOG_INFO("Double press!");
 
             // Reset combination tracking
@@ -234,7 +238,8 @@ int32_t ButtonThread::runOnce()
             evt.inputEvent = _doublePress;
             // evt.kbchar = _doublePress;
             this->notifyObservers(&evt);
-            playComboTune();
+            if (_doublePress != INPUT_BROKER_SEND_HEART)
+                playComboTune();
 
             break;
         }

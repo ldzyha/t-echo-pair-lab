@@ -25,6 +25,8 @@ struct ButtonConfig {
     input_broker_event triplePress = INPUT_BROKER_NONE;
     input_broker_event shortLong = INPUT_BROKER_NONE;
     bool touchQuirk = false;
+    uint16_t clickWindowMs = 0; // Zero keeps the existing screen/no-screen timing.
+    int16_t debounceMs = -1;    // Negative keeps the board default.
 
     // Constructor to set required parameter
     explicit ButtonConfig(uint8_t pin = 0) : pinNumber(pin) {}

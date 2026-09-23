@@ -75,6 +75,14 @@ def main():
         suites["delivery_payload"] = [
             "test/custom_audit/test_delivery_payload.cpp"
         ] + proto
+        suites["quick_heart"] = [
+            "-Itest/custom_audit/test_button_stubs",
+            "-Isrc/mesh/generated",
+            f"-I{lib}/OneButton/src",
+            f"-I{lib}/Nanopb",
+            "test/custom_audit/test_quick_heart.cpp",
+            f"{lib}/OneButton/src/OneButton.cpp",
+        ]
         suites["delivery_module"] = [
             "-Itest/custom_audit/test_delivery_stubs",
             "test/custom_audit/test_delivery_module.cpp",

@@ -36,6 +36,7 @@ flowchart LR
 | Валідність GPS | `src/gps/GPS.cpp`, `GPSFixValidity.h` |
 | Плата, кириличний шрифт | `variants/nrf52840/t-echo-plus/variant.h`, `platformio.ini` |
 | Перевірки | `test/custom_audit/` |
+| ❤️ подвійним натисканням | `src/input/QuickHeart.*`, `InputBroker.cpp`, `ButtonThread.*`; [поведінка](QUICK-HEART.md) |
 
 ## Інваріанти
 

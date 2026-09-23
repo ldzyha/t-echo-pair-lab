@@ -1,4 +1,5 @@
 #include "FakeDelivery.h"
+#include "input/QuickHeart.h"
 #include "mesh/DeliveryQueueCodec.h"
 std::vector<std::string> trace;
 FakeConfig config;
@@ -325,6 +326,36 @@ void testVerifiedContactRepair()
     harness.runOnce();
     assert(state.out[0].packet.public_key.bytes[0] == 0x5a && transmissions.size() == 1);
 }
+void testQuickHeartQueue()
+{
+    restart(false);
+    auto packet = message(990, "unused");
+    auto &peer = fakeNodes.nodes[PeerStatus::NODE_A];
+    assert(QuickHeart::prepare(packet, PeerStatus::NODE_B, PeerStatus::NODE_A, peer.user.public_key.bytes, 32));
+    assert(!packet.want_ack);
+    assert(DeliveryQueue::submit(packet));
+    harness.runOnce();
+    assert(DeliveryQueue::pendingCount() == 1 && transmissions.size() == 1);
+    const auto frame = frameOf(transmissions.back());
+    meshtastic_Data decoded = meshtastic_Data_init_default;
+    assert(pb_decode_from_bytes(frame.body, frame.size, meshtastic_Data_fields, &decoded));
+    assert(decoded.payload.size == sizeof(QuickHeart::TEXT) - 1);
+    assert(!memcmp(decoded.payload.bytes, QuickHeart::TEXT, decoded.payload.size));
+    completeRadio();
+    restart(true);
+    assert(DeliveryQueue::pendingCount() == 1 && transmissions.empty());
+    auto event = message(generatePacketId(), "peer event");
+    event.from = PeerStatus::NODE_A;
+    event.to = PeerStatus::NODE_B;
+    event.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+    DeliveryQueue::observeReceived(event);
+    harness.runOnce();
+    assert(transmissions.size() == 1 && frameOf(transmissions.back()).originalId == 990);
+    completeRadio();
+    receive(incoming(RECEIPT, frame.epoch, frame.sequence, 990));
+    assert(DeliveryQueue::pendingCount() == 0 && confirmed.size() == 1 && confirmed[0] == 990);
+}
+
 int main()
 {
     restart(false);
@@ -402,6 +433,7 @@ int main()
     harness.runOnce();
     assert(DeliveryQueue::pendingCount() == 0 && transmissions.empty() && !queueStatus.empty() && queueStatus.back().second != 0);
     testVerifiedContactRepair();
+    testQuickHeartQueue();
     puts("actual DeliveryQueueModule: FIFO, event retry, receipt, durable dedupe/reboot/delete, storage failure, verified "
          "repair: OK");
 }

@@ -4,6 +4,9 @@
 #include "graphics/Screen.h"
 #include "input/HapticFeedback.h"
 #include "modules/ExternalNotificationModule.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "input/QuickHeart.h"
+#endif
 
 #if ARCH_PORTDUINO
 #include "input/LinuxInputImpl.h"
@@ -108,6 +111,15 @@ int InputBroker::handleInputEvent(const InputEvent *event)
     }
 #endif
     powerFSM.trigger(EVENT_INPUT);
+
+#if defined(TTGO_T_ECHO_PLUS)
+    if (event && event->inputEvent == INPUT_BROKER_SEND_HEART) {
+        if (externalNotificationModule && moduleConfig.external_notification.enabled && externalNotificationModule->nagging())
+            externalNotificationModule->stopNow();
+        QuickHeart::send();
+        return 0;
+    }
+#endif
 
     if (event && event->inputEvent != INPUT_BROKER_NONE && externalNotificationModule &&
         moduleConfig.external_notification.enabled && externalNotificationModule->nagging()) {
@@ -328,6 +340,11 @@ void InputBroker::Init()
         userConfig.longPress = INPUT_BROKER_SELECT;
         userConfig.longPressTime = 500;
         userConfig.longLongPress = INPUT_BROKER_SHUTDOWN;
+#if defined(TTGO_T_ECHO_PLUS)
+        userConfig.doublePress = INPUT_BROKER_SEND_HEART;
+        userConfig.clickWindowMs = QuickHeart::CLICK_WINDOW_MS;
+        userConfig.debounceMs = QuickHeart::DEBOUNCE_MS;
+#endif
         UserButtonThread->initButton(userConfig);
     } else
 #endif
