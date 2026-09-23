@@ -1,0 +1,5 @@
+observation,radio,approx_elapsed_minutes,display_mcu_temperature_c,display_temperature_c,display_rh_percent,reference_temperature_c,reference_rh_percent,temperature_difference_c,humidity_difference_pp,display_sample_age_seconds,source,selection
+cooling-screen-01,Radio B,0,34,26.1,57,25.5,61,0.6,-4,13,photo_of_rounded_displays; raw_BME_and_filtered_MCU_unavailable,observation_only_not_used_for_fit
+cooling-screen-02,Radio A,0,40,25.4,63,25.5,61,-0.1,2,14,photo_of_rounded_displays; raw_BME_and_filtered_MCU_unavailable,observation_only_not_used_for_fit
+cooling-screen-03,Radio B,13,33,25.5,61,25.5,61,0.0,0,14,photo_of_rounded_displays; raw_BME_and_filtered_MCU_unavailable,observation_only_not_used_for_fit
+cooling-screen-04,Radio A,13,34,26.7,58,25.5,61,1.2,-3,4,photo_of_rounded_displays; raw_BME_and_filtered_MCU_unavailable,observation_only_not_used_for_fit
