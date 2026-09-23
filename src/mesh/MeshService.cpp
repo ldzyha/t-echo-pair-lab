@@ -9,6 +9,14 @@
 #include "MeshService.h"
 #include "MessageStore.h"
 #include "NodeDB.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "DeliveryQueue.h"
+#include "PeerStatus.h"
+#include "modules/TextMessageModule.h"
+#if !MESHTASTIC_EXCLUDE_EXTERNALNOTIFICATION
+#include "modules/ExternalNotificationModule.h"
+#endif
+#endif
 #include "PowerFSM.h"
 #include "RTC.h"
 #include "TypeConversions.h"
@@ -87,6 +95,10 @@ int MeshService::handleFromRadio(const meshtastic_MeshPacket *mp)
     powerFSM.trigger(EVENT_PACKET_FOR_PHONE); // Possibly keep the node from sleeping
 
     nodeDB->updateFrom(*mp); // update our DB state based off sniffing every RX packet from the radio
+#if defined(TTGO_T_ECHO_PLUS)
+    PeerStatus::recordReceived(*mp);
+    DeliveryQueue::observeReceived(*mp);
+#endif
     bool isPreferredRebroadcaster =
         IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_ROUTER, meshtastic_Config_DeviceConfig_Role_ROUTER_LATE,
                   meshtastic_Config_DeviceConfig_Role_CLIENT_BASE);
@@ -219,6 +231,10 @@ void MeshService::handleToRadio(meshtastic_MeshPacket &p)
 /** Attempt to cancel a previously sent packet from this _local_ node.  Returns true if a packet was found we could cancel */
 bool MeshService::cancelSending(PacketId id)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    if (DeliveryQueue::cancel(id))
+        return true;
+#endif
     return router->cancelSending(nodeDB->getNodeNum(), id);
 }
 
@@ -247,10 +263,20 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs, 
 void MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
 {
     uint32_t mesh_packet_id = p->id;
+#if defined(TTGO_T_ECHO_PLUS)
+    PeerStatus::recordSent(*p);
+    if (DeliveryQueue::submit(*p)) {
+        releaseToPool(p);
+        return;
+    }
+#endif
     nodeDB->updateFrom(*p); // update our local DB for this packet (because phone might have sent position packets etc...)
 
     // Note: We might return !OK if our fifo was full, at that point the only option we have is to drop it
     ErrorCode res = router->sendLocal(p, src);
+#if defined(TTGO_T_ECHO_PLUS)
+    DeliveryQueue::sentToRouter(mesh_packet_id, res);
+#endif
 
     /* NOTE(pboldin): Prepare and send QueueStatus message to the phone as a
      * high-priority message. */
@@ -452,6 +478,55 @@ bool MeshService::isToPhoneQueueEmpty()
 {
     return toPhoneQueue.isEmpty();
 }
+
+#if defined(TTGO_T_ECHO_PLUS)
+namespace DeliveryQueue
+{
+void deliverToClient(const meshtastic_MeshPacket &text)
+{
+    const bool live = text.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA && !text.via_mqtt;
+    const bool alreadyStored = messageStore.containsPacket(text.from, text.id);
+    if (!alreadyStored && textMessageModule) {
+        textMessageModule->receiveDeferred(text);
+#if ENABLE_MESSAGE_PERSISTENCE
+        messageStore.saveToFlash();
+#endif
+#if !MESHTASTIC_EXCLUDE_EXTERNALNOTIFICATION
+        if (live && externalNotificationModule)
+            externalNotificationModule->receiveDeferred(text);
+#endif
+    }
+    if (live) {
+        nodeDB->updateFrom(text);
+        PeerStatus::recordReceived(text);
+    }
+    // A persisted inbox replay must not create a new RX event or overwrite
+    // last_heard. The stable original ID lets the phone correlate the message.
+    service->sendToPhone(packetPool.allocCopy(text));
+}
+
+void confirmToClient(const meshtastic_MeshPacket &provenReceipt, uint32_t originalPhoneId)
+{
+    meshtastic_MeshPacket acknowledgement = provenReceipt;
+    acknowledgement.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+    acknowledgement.decoded = meshtastic_Data_init_default;
+    acknowledgement.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+    acknowledgement.decoded.request_id = originalPhoneId;
+    acknowledgement.want_ack = false;
+    meshtastic_Routing result = meshtastic_Routing_init_default;
+    result.which_variant = meshtastic_Routing_error_reason_tag;
+    result.error_reason = meshtastic_Routing_Error_NONE;
+    acknowledgement.decoded.payload.size = pb_encode_to_bytes(
+        acknowledgement.decoded.payload.bytes, sizeof(acknowledgement.decoded.payload.bytes), meshtastic_Routing_fields, &result);
+    messageStore.markAcknowledged(originalPhoneId);
+    nodeDB->updateFrom(acknowledgement);
+    PeerStatus::recordReceived(acknowledgement);
+    // This maps a validated, authenticated endpoint receipt to the ID the
+    // Android/iOS client originally sent. It never synthesizes success on TX.
+    service->sendToPhone(packetPool.allocCopy(acknowledgement));
+}
+} // namespace DeliveryQueue
+#endif
 
 uint32_t MeshService::GetTimeSinceMeshPacket(const meshtastic_MeshPacket *mp)
 {

@@ -44,6 +44,20 @@ bool waitingToReset = false;
 bool scrollStarted = false;
 static bool didReset = false;
 static constexpr int MESSAGE_BLOCK_GAP = 6;
+#if defined(TTGO_T_ECHO_PLUS)
+uint8_t getNewMessageCount()
+{
+    return messageStore.unreadCount();
+}
+
+void markNewMessagesRead()
+{
+    const auto mode = getThreadMode();
+    messageStore.markMessagesRead(mode == ThreadMode::CHANNEL ? getThreadChannel() : -1,
+                                  mode == ThreadMode::DIRECT ? getThreadPeer() : 0);
+    hasUnreadMessage = getNewMessageCount() > 0;
+}
+#endif
 
 void scrollUp()
 {
@@ -326,7 +340,11 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     }
 
     // Clear the unread message indicator when viewing the message
+#if defined(TTGO_T_ECHO_PLUS)
+    hasUnreadMessage = getNewMessageCount() > 0;
+#else
     hasUnreadMessage = false;
+#endif
 
     // Filter messages based on thread mode
     std::deque<StoredMessage> filtered;
@@ -635,8 +653,8 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
         scrollY = 0;
     }
 #else
-    // E-Ink: disable autoscroll
-    scrollY = 0.0f;
+    // Keep manual paging while avoiding animated e-ink refreshes.
+    scrollY = std::max(0.0f, std::min(scrollY, static_cast<float>(scrollStop)));
     waitingToReset = false;
     scrollStarted = false;
     lastTime = millis();
@@ -939,6 +957,31 @@ std::vector<int> calculateLineHeights(const std::vector<std::string> &lines, con
 
 void handleNewMessage(OLEDDisplay *display, const StoredMessage &sm, const meshtastic_MeshPacket &packet)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    if (packet.from == nodeDB->getNodeNum())
+        return;
+    if (packet.from != 0) {
+        hasUnreadMessage = getNewMessageCount() > 0;
+        if (sm.type == MessageType::BROADCAST) {
+            const auto &channel = channels.getByIndex(sm.channelIndex);
+            if (channel.settings.has_module_settings && channel.settings.module_settings.is_muted)
+                return;
+        }
+        const char *msgText = MessageStore::getText(sm);
+        if (msgText && msgText[0] != '\0')
+            setThreadFor(sm, packet);
+        resetScrollState();
+        if (screen) {
+            UIFrameEvent event;
+            event.action = UIFrameEvent::Action::SWITCH_TO_TEXTMESSAGE;
+            screen->handleUIFrameEvent(&event);
+            screen->setOn(true);
+            // Let the normal screen task draw after the radio handling returns;
+            // a synchronous e-ink refresh can delay the radio ACK.
+        }
+        return;
+    }
+#endif
     if (packet.from != 0) {
         hasUnreadMessage = true;
 

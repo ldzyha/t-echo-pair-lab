@@ -1,39 +1,49 @@
-<div align="center" markdown="1">
+# T-Echo Pair Lab
 
-<img src=".github/meshtastic_logo.png" alt="Meshtastic Logo" width="80"/>
-<h1>Meshtastic Firmware</h1>
+Експериментальна прошивка **Meshtastic для двох LILYGO T-Echo Plus із BME280** та журнал її дослідження: вихідний код, тести, приклади конфігурацій, налаштування пари через USB, збірка й прошивання з Linux / ChromeOS.
 
-![GitHub release downloads](https://img.shields.io/github/downloads/meshtastic/firmware/total)
-[![CI](https://img.shields.io/github/actions/workflow/status/meshtastic/firmware/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/meshtastic/firmware/actions/workflows/ci.yml)
-[![CLA assistant](https://cla-assistant.io/readme/badge/meshtastic/firmware)](https://cla-assistant.io/meshtastic/firmware)
-[![Fiscal Contributors](https://opencollective.com/meshtastic/tiers/badge.svg?label=Fiscal%20Contributors&color=deeppink)](https://opencollective.com/meshtastic/)
-[![Vercel](https://img.shields.io/static/v1?label=Powered%20by&message=Vercel&style=flat&logo=vercel&color=000000)](https://vercel.com?utm_source=meshtastic&utm_campaign=oss)
+Основа: Meshtastic `2.7.26`, commit `54e0d8d0ab2ff56b3a9ce967e53f79e49af560fb`. Це окрема модифікація, а не офіційний реліз Meshtastic. [Оригінальний README](README.upstream.md), [ліцензія](LICENSE).
 
-<a href="https://trendshift.io/repositories/5524" target="_blank"><img src="https://trendshift.io/api/badge/repositories/5524" alt="meshtastic%2Ffirmware | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+## З чого почати
 
-</div>
+1. [Можливості й обмеження](docs/FEATURES.md) — фактичний стан функцій.
+2. [Налаштування двох рацій](docs/PAIRING.md) — YAML, приватний канал, контакти, Android/iPhone.
+3. [Збірка й прошивання](docs/BUILD-FLASH.md) — Python venv, USB/DFU, відновлення.
+4. [Калібрування BME280](docs/CALIBRATION.md) — виміри, формули, TH1–TH4, похибки.
+5. [Архітектура й карта коду](docs/ARCHITECTURE.md) — де змінювати екран, датчики, час, GPS і доставку.
+6. [Тести й діагностика](docs/TESTING.md) — перевірки від host-тестів до реального радіозв’язку.
+7. [Журнал дослідження](docs/RESEARCH.md) — знайдені причини збоїв та невиконані ідеї.
+8. [Приватність](docs/PRIVACY.md) — що зберігається лише локально.
 
-</div>
+## Основні зміни
 
-<div align="center">
-	<a href="https://meshtastic.org">Website</a>
-	-
-	<a href="https://meshtastic.org/docs/">Documentation</a>
-</div>
+- Головний e-ink екран: годинник, дата, ідентифікатор, живлення/температура MCU, свіжі T/RH/P.
+- Кирилиця, показ тексту повідомлення, локальний лічильник непрочитаного, вібрація.
+- Статус пари на основі RX-подій, вік координат і напрямок до останньої відомої позиції.
+- Черга особистих повідомлень у flash, повтори за RX-подіями, захищені квитанції.
+- Перевірка GPS/часу, авторитетне встановлення часу локальним клієнтом, 24 години.
+- Forced ×1 BME280, один актуальний зразок у RAM, окремі експериментальні поправки T/RH.
 
-## Overview
+## Публічні налаштування
 
-This repository contains the official device firmware for Meshtastic, an open-source LoRa mesh networking project designed for long-range, low-power communication without relying on internet or cellular infrastructure. The firmware supports various hardware platforms, including ESP32, nRF52, RP2040/RP2350, and Linux-based devices.
+У прикладах використано **Radio A / Radio B** та вигадані ID. Реальні дані своєї пари зберігайте тільки в ігнорованих локальних файлах; правила публікації наведено в [PRIVACY.md](docs/PRIVACY.md).
 
-Meshtastic enables text messaging, location sharing, and telemetry over a decentralized mesh network, making it ideal for outdoor adventures, emergency preparedness, and remote operations.
+За стандартних нульових ID у `src/mesh/PairSettings.h` власна черга пари не перехоплює особисті повідомлення. Налаштуйте ID через ігнорований `src/mesh/PairSettings.local.h`, щоб увімкнути її для ваших двох рацій. Сторінка Peer може показувати перший доступний favorite-контакт навіть без локальних ID; звичайні функції Meshtastic доступні. `PAIR_ENABLE_THERMAL_EXPERIMENTAL=0` за замовчуванням: BME280 передає власні виміри без емпіричної поправки. Приклад кривої отримано на двох екземплярах біля кімнатної температури; точність у холоді та під час охолодження не підтверджена.
 
-### Get Started
+## Межі перевірки
 
-- 🔧 **[Building Instructions](https://meshtastic.org/docs/development/firmware/build)** – Learn how to compile the firmware from source.
-- ⚡ **[Flashing Instructions](https://meshtastic.org/docs/getting-started/flashing-firmware/)** – Install or update the firmware on your device.
+Фізичні досліди серії виконувалися на попередніх персоналізованих збірках. Нова публічна версія з локальними параметрами пари та відновленням черги після імпорту контакту потребує окремої перевірки на двох раціях. Успішна компіляція й host-тести не підтверджують цей апаратний цикл. Деталі: [TESTING.md](docs/TESTING.md).
 
-Join our community and help improve Meshtastic! 🚀
+## Швидка перевірка
 
-## Stats
+```bash
+python3 tools/run_host_tests.py --core-only
+```
 
-![Alt](https://repobeats.axiom.co/api/embed/8025e56c482ec63541593cc5bd322c19d5c0bdcf.svg "Repobeats analytics image")
+Потрібні Python 3 і C++17-компілятор `g++`. Повний набір після завантаження залежностей:
+
+```bash
+python tools/run_host_tests.py
+```
+
+Host-тести не керують раціями. Проходження тестів формул не підтверджує фізичну точність датчика.

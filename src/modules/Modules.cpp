@@ -4,6 +4,9 @@
 #include "modules/SystemCommandsModule.h"
 #endif
 #include "modules/StatusLEDModule.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "mesh/DeliveryQueue.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_REPLYBOT
 #include "ReplyBotModule.h"
 #endif
@@ -133,6 +136,9 @@ void setupModules()
     waypointModule = new WaypointModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_TEXTMESSAGE
+#if defined(TTGO_T_ECHO_PLUS)
+    DeliveryQueue::setup();
+#endif
     textMessageModule = new TextMessageModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE

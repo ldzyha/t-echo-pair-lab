@@ -1,0 +1,3 @@
+meshtastic[cli]==2.7.11
+adafruit-nrfutil==0.5.3.post16
+platformio==6.2.0

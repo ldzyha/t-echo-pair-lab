@@ -2,6 +2,10 @@
 #include "MeshService.h"
 #include "configuration.h"
 #include "mesh/RadioInterface.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "Throttle.h"
+#include "mesh/PeerStatus.h"
+#endif
 #include <Arduino.h>
 
 /*
@@ -110,6 +114,27 @@ int StatusLEDModule::handleLoRaRx(uint32_t)
 int32_t StatusLEDModule::runOnce()
 {
     my_interval = 1000;
+
+#if defined(TTGO_T_ECHO_PLUS)
+    if (peerPulsePin && !Throttle::isWithinTimespanMs(peerPulseStarted, 900)) {
+        ledOff(peerPulsePin);
+        peerPulsePin = 0;
+    }
+    const uint32_t age = PeerStatus::rxAgeSeconds();
+    const uint8_t newState = age == UINT32_MAX ? 0 : age < PeerStatus::SILENT_AFTER_SECONDS ? 1 : 2;
+    if (newState != peerState) {
+        if (peerPulsePin)
+            ledOff(peerPulsePin);
+        peerPulsePin = 0;
+        if (newState == 1 || (newState == 2 && peerState == 1)) {
+            peerPulsePin = newState == 1 ? LED_GREEN : LED_RED;
+            pinMode(peerPulsePin, OUTPUT);
+            digitalWrite(peerPulsePin, LED_STATE_ON);
+            peerPulseStarted = millis();
+        }
+        peerState = newState;
+    }
+#endif
 
     if (power_state == charging) {
 #ifndef POWER_LED_HARDWARE_BLINKS_WHILE_CHARGING

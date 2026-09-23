@@ -11,7 +11,14 @@
 #include "modules/ExternalNotificationModule.h"
 #include "power.h"
 #include <OLEDDisplay.h>
+#include <ctime>
 #include <graphics/images.h>
+#if defined(TTGO_T_ECHO_PLUS) && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR &&                                                     \
+    !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR_EXTERNAL && __has_include(<Adafruit_BME280.h>)
+#include "graphics/draw/ClockSensorStatus.h"
+#include "modules/Telemetry/Sensor/BME280Sensor.h"
+#define T_ECHO_CLOCK_DIE_TEMPERATURE 1
+#endif
 
 namespace graphics
 {
@@ -138,6 +145,16 @@ void drawCommonHeader(OLEDDisplay *display, int16_t x, int16_t y, const char *ti
     int chargePercent = powerStatus->getBatteryChargePercent();
     bool isCharging = powerStatus->getIsCharging();
     bool usbPowered = powerStatus->getHasUSB();
+#if defined(TTGO_T_ECHO_PLUS)
+    // The ADC charge estimate saturates on USB and cannot indicate charge completion.
+    if (usbPowered) {
+        chargePercent = 101;
+        isCharging = false;
+    }
+#endif
+#ifdef T_ECHO_CLOCK_DIE_TEMPERATURE
+    const bool showDieTemperature = show_date && force_no_invert && (!titleStr || !titleStr[0]);
+#endif
 
     if (chargePercent >= 100) {
         isCharging = false;
@@ -205,7 +222,16 @@ void drawCommonHeader(OLEDDisplay *display, int16_t x, int16_t y, const char *ti
         }
     }
 
-    if (chargePercent != 101) {
+#ifdef T_ECHO_CLOCK_DIE_TEMPERATURE
+    if (showDieTemperature) {
+        char chargeStr[24];
+        formatClockSensorStatus(chargeStr, sizeof(chargeStr), usbPowered, chargePercent, BME280Sensor::readDieTemperature());
+        display->drawString(batteryX, textY, chargeStr);
+        if (isBold)
+            display->drawString(batteryX + 1, textY, chargeStr);
+    } else
+#endif
+        if (chargePercent != 101) {
         // === Battery % Display ===
         char chargeStr[4];
         snprintf(chargeStr, sizeof(chargeStr), "%d", chargePercent);
@@ -244,6 +270,15 @@ void drawCommonHeader(OLEDDisplay *display, int16_t x, int16_t y, const char *ti
                 snprintf(dateLine, sizeof(dateLine), "%s", &datetimeStr[2]);
             }
         }
+#ifdef T_ECHO_CLOCK_DIE_TEMPERATURE
+        if (showDieTemperature) {
+            const time_t localTime = rtc_sec;
+            struct tm date {
+            };
+            if (gmtime_r(&localTime, &date))
+                snprintf(dateLine, sizeof(dateLine), "%02d.%02d", date.tm_mday, date.tm_mon + 1);
+        }
+#endif
 
         if (config.display.use_12h_clock) {
             bool isPM = hour >= 12;

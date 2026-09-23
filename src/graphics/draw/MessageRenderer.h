@@ -35,6 +35,11 @@ const std::vector<uint32_t> &getSeenPeers();
 
 void clearThreadRegistries();
 
+#if defined(TTGO_T_ECHO_PLUS)
+uint8_t getNewMessageCount();
+void markNewMessagesRead();
+#endif
+
 // Text and emote rendering
 void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const std::string &line, const Emote *emotes, int emoteCount);
 

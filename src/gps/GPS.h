@@ -106,6 +106,9 @@ class GPS : private concurrency::OSThread
 
     /// Returns true if we have acquired GPS lock.
     virtual bool hasLock();
+#if defined(TTGO_T_ECHO_PLUS)
+    bool isTimeRejected() const { return timeRejected; }
+#endif
 
     /// Returns true if there's valid data flow with the chip.
     virtual bool hasFlow();
@@ -185,6 +188,12 @@ class GPS : private concurrency::OSThread
      *   GPS location, valid and fresh (< gps_update_interval + position_broadcast_secs)
      */
     bool hasValidLocation = false; // default to false, until we complete our first read
+    bool hasReceiverLock();
+#if defined(TTGO_T_ECHO_PLUS)
+    bool timeRejected = false;
+    uint32_t lastValidFixMsec = 0;
+    void invalidateFix(bool badTime);
+#endif
 
     bool shouldPublish = false; // If we've changed GPS state, this will force a publish the next loop()
 

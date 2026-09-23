@@ -70,6 +70,9 @@ class ExternalNotificationModule : public SinglePortModule, private concurrency:
 
     bool canBuzz();
     bool nagging();
+#if defined(TTGO_T_ECHO_PLUS)
+    void receiveDeferred(const meshtastic_MeshPacket &packet) { handleReceived(packet); }
+#endif
 
     void stopNow();
 

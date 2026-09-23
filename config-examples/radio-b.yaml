@@ -1,0 +1,44 @@
+# Non-secret example. make_pair_profiles.py adds a newly generated shared private channel.
+owner: Radio B
+owner_short: B
+config:
+  device:
+    role: CLIENT
+    tzdef: EET-2EEST,M3.5.0/3,M10.5.0/4
+    buzzerMode: DISABLED
+  display:
+    screenOnSecs: 0
+    use12hClock: false
+    autoScreenCarouselSecs: 0
+  bluetooth:
+    enabled: true
+    mode: RANDOM_PIN
+  lora:
+    region: EU_868
+    usePreset: true
+    modemPreset: LONG_FAST
+    channelNum: 1
+    hopLimit: 3
+    txEnabled: true
+    ignoreMqtt: true
+  position:
+    gpsMode: ENABLED
+    fixedPosition: false
+    gpsUpdateInterval: 8
+    positionBroadcastSecs: 15
+    positionBroadcastSmartEnabled: false
+    positionFlags: 811
+module_config:
+  mqtt:
+    enabled: false
+  telemetry:
+    environmentMeasurementEnabled: true
+    environmentScreenEnabled: true
+    environmentUpdateInterval: 60
+    deviceUpdateInterval: 3600
+  externalNotification:
+    enabled: true
+    alertMessage: false
+    alertMessageBuzzer: false
+    alertMessageVibra: true
+    outputMs: 500

@@ -1,0 +1,32 @@
+name: Pair lab checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-and-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned tools
+        run: python -m pip install -r requirements-pair.txt
+      - name: Core logic and Python syntax
+        run: |
+          python tools/run_host_tests.py --core-only
+          python -m compileall -q tools
+      - name: Firmware without personal configuration
+        run: python tools/build_firmware.py
+      - name: Full production helper and module tests
+        run: python tools/run_host_tests.py
+      - name: Whitespace
+        run: git diff --check

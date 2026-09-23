@@ -5,6 +5,9 @@
 #include "modules/TraceRouteModule.h"
 #endif
 #include "NodeDB.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "DeliveryQueueCodec.h"
+#endif
 
 NextHopRouter::NextHopRouter() {}
 
@@ -28,7 +31,18 @@ ErrorCode NextHopRouter::send(meshtastic_MeshPacket *p)
 
     // If it's from us, ReliableRouter already handles retransmissions if want_ack is set. If a next hop is set and hop limit is
     // not 0 or want_ack is set, start retransmissions
-    if ((!isFromUs(p) || !p->want_ack) && p->next_hop != NO_NEXT_HOP_PREFERENCE && (p->hop_limit > 0 || p->want_ack))
+    bool eventDriven = false;
+#if defined(TTGO_T_ECHO_PLUS)
+    DeliveryQueueCodec::Frame frame;
+    eventDriven = isFromUs(p) && p->pki_encrypted && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+                  p->decoded.portnum == meshtastic_PortNum_PRIVATE_APP &&
+                  DeliveryQueueCodec::decode(p->decoded.payload.bytes, p->decoded.payload.size, frame);
+#endif
+    // Each application retry discovers a route with a fresh transport ID.
+    if (eventDriven)
+        p->next_hop = NO_NEXT_HOP_PREFERENCE;
+    if (!eventDriven && (!isFromUs(p) || !p->want_ack) && p->next_hop != NO_NEXT_HOP_PREFERENCE &&
+        (p->hop_limit > 0 || p->want_ack))
         startRetransmission(packetPool.allocCopy(*p)); // start retransmission for relayed packet
 
     return Router::send(p);

@@ -56,3 +56,18 @@ CMakeLists.txt
 .python3
 .claude/scheduled_tasks.lock
 userPrefs.jsonc.mcp-session-bak
+
+# Local pair lab identities, secrets, logs and generated firmware
+.private/
+.local/
+.venv*/
+.artifacts/
+.build-host-tests/
+src/mesh/PairSettings.local.h
+*.local.yaml
+*.local.json
+*.log
+*.uf2
+*.hex
+*.elf
+*.zip

@@ -1,17 +1,103 @@
 #include "RTC.h"
+#include "NodeDB.h"
+#include "TimeFormatUtils.h"
+#include "TrustedTime.h"
 #include "configuration.h"
 #include "detect/ScanI2C.h"
 #include "main.h"
 #include "modules/NodeInfoModule.h"
 #include <Throttle.h>
+#include <cstdlib>
 #include <sys/time.h>
 #include <time.h>
+#if defined(TTGO_T_ECHO_PLUS) && defined(PCF8563_RTC)
+#include "FSCommon.h"
+#include "SPILock.h"
+#include "TrustedRTCRecord.h"
+#endif
 
 static RTCQuality currentQuality = RTCQualityNone;
+#if defined(TTGO_T_ECHO_PLUS)
+static TrustedTimeAnchor trustedLocalTime;
+static bool needsTrustedLocalTime = false;
+#endif
 uint32_t lastSetFromPhoneNtpOrGps = 0;
 
 static uint32_t lastTimeValidationWarning = 0;
 static const uint32_t TIME_VALIDATION_WARNING_INTERVAL_MS = 15000; // 15 seconds
+
+#if defined(TTGO_T_ECHO_PLUS) && defined(PCF8563_RTC)
+static uint32_t lastHardwareRtcEpoch = 0;
+static TrustedRTCRecord trustedRtcRecord;
+static int trustedRtcSlot = -1;
+static bool trustedRtcRecordLoaded = false;
+static const char *const trustedRtcPaths[] = {"/prefs/trusted-rtc.0", "/prefs/trusted-rtc.1"};
+
+static bool readTrustedRtcSlot(int slot, TrustedRTCRecord &record)
+{
+    File file = FSCom.open(trustedRtcPaths[slot], FILE_O_READ);
+    if (!file)
+        return false;
+    const bool complete = file.size() == sizeof(record) && file.read((uint8_t *)&record, sizeof(record)) == sizeof(record);
+    file.close();
+    return complete && record.valid();
+}
+
+static void loadTrustedRtcRecord()
+{
+    if (trustedRtcRecordLoaded)
+        return;
+    trustedRtcRecordLoaded = true;
+    concurrency::LockGuard guard(spiLock);
+    for (int slot = 0; slot < 2; ++slot) {
+        if (FSCom.exists(trustedRtcPaths[slot]))
+            needsTrustedLocalTime = true;
+        TrustedRTCRecord candidate;
+        if (readTrustedRtcSlot(slot, candidate) && (trustedRtcSlot < 0 || candidate.generation > trustedRtcRecord.generation)) {
+            trustedRtcRecord = candidate;
+            trustedRtcSlot = slot;
+        }
+    }
+}
+
+static bool saveTrustedRtcRecord(uint32_t epoch)
+{
+    loadTrustedRtcRecord();
+    if (trustedRtcSlot >= 0 && epoch >= trustedRtcRecord.minimumEpoch)
+        return true;
+    TrustedRTCRecord record;
+    record.generation = trustedRtcSlot < 0 ? 1 : trustedRtcRecord.generation + 1;
+    record.minimumEpoch = epoch;
+    record.seal();
+    const int slot = trustedRtcSlot == 0 ? 1 : 0;
+    concurrency::LockGuard guard(spiLock);
+    FSCom.remove(trustedRtcPaths[slot]);
+    File file = FSCom.open(trustedRtcPaths[slot], FILE_O_WRITE);
+    if (!file)
+        return false;
+    const bool complete = file.write((const uint8_t *)&record, sizeof(record)) == sizeof(record);
+    file.flush();
+    file.close();
+    TrustedRTCRecord verified;
+    if (!complete || !readTrustedRtcSlot(slot, verified) || verified.generation != record.generation)
+        return false;
+    trustedRtcRecord = verified;
+    trustedRtcSlot = slot;
+    return true;
+}
+
+static bool rtcIntegrityGood(TwoWire &wire)
+{
+    wire.beginTransmission(PCF8563_RTC);
+    wire.write(0x00);
+    if (wire.endTransmission() != 0 || wire.requestFrom((uint8_t)PCF8563_RTC, (uint8_t)3) != 3)
+        return false;
+    const uint8_t control = wire.read();
+    wire.read();
+    const uint8_t seconds = wire.read();
+    return !(control & 0x20) && !(seconds & 0x80); // STOP and voltage-low invalidate the clock.
+}
+#endif
 
 static void triggerNodeInfoCheckOnTimeSource(RTCQuality oldQuality, RTCQuality newQuality)
 {
@@ -24,6 +110,52 @@ static void triggerNodeInfoCheckOnTimeSource(RTCQuality oldQuality, RTCQuality n
 RTCQuality getRTCQuality()
 {
     return currentQuality;
+}
+
+void applyConfiguredTimezone()
+{
+#if !MESHTASTIC_EXCLUDE_TZ
+    setenv("TZ", config.device.tzdef[0] ? config.device.tzdef : "GMT0", 1);
+    tzset();
+#endif
+}
+
+bool isGPSTimeAcceptable(uint32_t epochSeconds)
+{
+#if defined(TTGO_T_ECHO_PLUS)
+    return !needsTrustedLocalTime && trustedLocalTime.accepts(epochSeconds, millis());
+#else
+    (void)epochSeconds;
+    return true;
+#endif
+}
+
+RTCSetResult setRTCFromLocalClient(uint32_t epochSeconds)
+{
+    timeval tv = {};
+    tv.tv_sec = epochSeconds;
+#if defined(TTGO_T_ECHO_PLUS)
+    const auto result = perhapsSetRTC(RTCQualityNTP, &tv, true);
+    if (result == RTCSetResultSuccess) {
+        trustedLocalTime.set(epochSeconds, millis());
+        needsTrustedLocalTime = false;
+#if defined(PCF8563_RTC)
+        if (lastHardwareRtcEpoch >= epochSeconds && lastHardwareRtcEpoch - epochSeconds <= 2) {
+            if (saveTrustedRtcRecord(epochSeconds))
+                LOG_INFO("Trusted RTC commissioned for offline restart");
+            else
+                LOG_WARN("Trusted RTC marker write failed; offline trust unavailable");
+        } else {
+            LOG_WARN("Local time set in RAM; hardware RTC verification failed");
+        }
+#endif
+        LOG_INFO("Trusted local clock set: epoch=%lu; GPS tolerance=%lus", (unsigned long)epochSeconds,
+                 (unsigned long)TrustedTimeAnchor::GPS_TOLERANCE_SECONDS);
+    }
+    return result;
+#else
+    return perhapsSetRTC(RTCQualityNTP, &tv, false);
+#endif
 }
 
 // stuff that really should be in in the instance instead...
@@ -81,6 +213,10 @@ static struct timeval mockSystemTime = {};
  */
 RTCSetResult readFromRTC()
 {
+#if defined(TTGO_T_ECHO_PLUS) && defined(PCF8563_RTC)
+    loadTrustedRtcRecord();
+    lastHardwareRtcEpoch = 0;
+#endif
 #ifdef PIO_UNIT_TESTING
     if (forceSystemTimeFallback) {
         return readFromSystemTimeFallback();
@@ -141,10 +277,17 @@ RTCSetResult readFromRTC()
 #endif
         uint32_t now = millis();
 
+#if defined(TTGO_T_ECHO_PLUS)
+        if (!rtc.begin(Wire) || !rtcIntegrityGood(Wire)) {
+            LOG_WARN("RTC clock invalid: read failed, stopped or lost power");
+            return RTCSetResultInvalidTime;
+        }
+#else
 #if WIRE_INTERFACES_COUNT == 2
         rtc.begin(rtc_found.port == ScanI2C::I2CPort::WIRE1 ? Wire1 : Wire);
 #else
         rtc.begin(Wire);
+#endif
 #endif
 
         RTC_DateTime datetime = rtc.getDateTime();
@@ -152,6 +295,12 @@ RTCSetResult readFromRTC()
         tv.tv_sec = gm_mktime(&t);
         tv.tv_usec = 0;
         uint32_t printableEpoch = tv.tv_sec; // Print lib only supports 32 bit but time_t can be 64 bit on some platforms
+
+#if defined(TTGO_T_ECHO_PLUS)
+        if (t.tm_mon < 0 || t.tm_mon > 11 || t.tm_mday < 1 || t.tm_mday > 31 || t.tm_hour < 0 || t.tm_hour > 23 || t.tm_min < 0 ||
+            t.tm_min > 59 || t.tm_sec < 0 || t.tm_sec > 59)
+            return RTCSetResultInvalidTime;
+#endif
 
 #ifdef BUILD_EPOCH
         if (tv.tv_sec < BUILD_EPOCH) {
@@ -165,6 +314,18 @@ RTCSetResult readFromRTC()
 
         LOG_DEBUG("Read RTC time from %s getDateTime as %02d-%02d-%02d %02d:%02d:%02d (%ld)", rtc.getChipName(), t.tm_year + 1900,
                   t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, printableEpoch);
+#if defined(TTGO_T_ECHO_PLUS)
+        lastHardwareRtcEpoch = printableEpoch;
+        if (currentQuality == RTCQualityNone && needsTrustedLocalTime) {
+            if (trustedRtcSlot < 0 || !trustedRtcRecord.acceptsRTC(printableEpoch, true)) {
+                LOG_WARN("RTC not trusted after restart; connect a local client to set time");
+                return RTCSetResultInvalidTime;
+            }
+            trustedLocalTime.set(printableEpoch, now);
+            needsTrustedLocalTime = false;
+            LOG_INFO("Restored trusted advancing hardware RTC: epoch=%lu", (unsigned long)printableEpoch);
+        }
+#endif
         if (currentQuality == RTCQualityNone) {
             RTCQuality oldQuality = currentQuality;
             timeStartMsec = now;
@@ -231,6 +392,15 @@ RTCSetResult perhapsSetRTC(RTCQuality q, const struct timeval *tv, bool forceUpd
     static uint32_t lastSetMsec = 0;
     uint32_t now = millis();
     uint32_t printableEpoch = tv->tv_sec; // Print lib only supports 32 bit but time_t can be 64 bit on some platforms
+#if defined(TTGO_T_ECHO_PLUS)
+    if ((q == RTCQualityGPS || (!forceUpdate && q >= RTCQualityFromNet)) && !isGPSTimeAcceptable(printableEpoch)) {
+        if (!Throttle::isWithinTimespanMs(lastTimeValidationWarning, TIME_VALIDATION_WARNING_INTERVAL_MS)) {
+            LOG_WARN("Ignore %s time (%lu): conflicts with trusted local clock", RtcName(q), (unsigned long)printableEpoch);
+            lastTimeValidationWarning = now;
+        }
+        return RTCSetResultInvalidTime;
+    }
+#endif
 #ifdef BUILD_EPOCH
     if (tv->tv_sec < BUILD_EPOCH) {
         if (Throttle::isWithinTimespanMs(lastTimeValidationWarning, TIME_VALIDATION_WARNING_INTERVAL_MS) == false) {
@@ -424,11 +594,7 @@ int32_t getTZOffset()
 #if MESHTASTIC_EXCLUDE_TZ
     return 0;
 #else
-    time_t now = getTime(false);
-    struct tm *gmt;
-    gmt = gmtime(&now);
-    gmt->tm_isdst = -1;
-    return (int32_t)difftime(now, mktime(gmt));
+    return TimeFormatUtils::timezoneOffset(getTime(false));
 #endif
 }
 
@@ -495,6 +661,16 @@ void resetRTCStateForTests()
     zeroOffsetSecs = 0;
     lastSetFromPhoneNtpOrGps = 0;
     lastTimeValidationWarning = 0;
+#if defined(TTGO_T_ECHO_PLUS)
+    trustedLocalTime = TrustedTimeAnchor{};
+    needsTrustedLocalTime = false;
+#if defined(PCF8563_RTC)
+    trustedRtcRecord = TrustedRTCRecord{};
+    trustedRtcRecordLoaded = false;
+    trustedRtcSlot = -1;
+    lastHardwareRtcEpoch = 0;
+#endif
+#endif
     setReadFromRTCUseSystemTimeForTests(false);
     clearRTCSystemTimeForTests();
 }
@@ -503,40 +679,7 @@ void resetRTCStateForTests()
 time_t gm_mktime(const struct tm *tm)
 {
 #if !MESHTASTIC_EXCLUDE_TZ
-    time_t result = 0;
-
-    // First, get us to the start of tm->year, by calculating the number of days since the Unix epoch.
-    int year = 1900 + tm->tm_year; // tm_year is years since 1900
-    int year_minus_one = year - 1;
-    int days_before_this_year = 0;
-    days_before_this_year += year_minus_one * 365;
-    // leap days: every 4 years, except 100s, but including 400s.
-    days_before_this_year += year_minus_one / 4 - year_minus_one / 100 + year_minus_one / 400;
-    // subtract from 1970-01-01 to get days since epoch
-    days_before_this_year -= 719162; // (1969 * 365 + 1969 / 4 - 1969 / 100 + 1969 / 400);
-
-    // Now, within this tm->year, compute the days *before* this tm->month starts.
-    static const int days_before_month[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334}; // non-leap year
-    int days_this_year_before_this_month = days_before_month[tm->tm_mon];                             // tm->tm_mon is 0..11
-
-    // If this is a leap year, and we're past February, add a day:
-    if (tm->tm_mon >= 2 && (year % 4) == 0 && ((year % 100) != 0 || (year % 400) == 0)) {
-        days_this_year_before_this_month += 1;
-    }
-
-    // And within this month:
-    int days_this_month_before_today = tm->tm_mday - 1; // tm->tm_mday is 1..31
-
-    // Now combine them all together, and convert days to seconds:
-    result += (days_before_this_year + days_this_year_before_this_month + days_this_month_before_today);
-    result *= 86400L;
-
-    // Finally, add in the hours, minutes, and seconds of today:
-    result += tm->tm_hour * 3600;
-    result += tm->tm_min * 60;
-    result += tm->tm_sec;
-
-    return result;
+    return TimeFormatUtils::utcFromBrokenDown(*tm);
 #else
     struct tm tmCopy = *tm;
     return mktime(&tmCopy);

@@ -2,11 +2,16 @@
 #if HAS_SCREEN
 #include "FSCommon.h"
 #include "MessageStore.h"
+#include "MessageTextUtils.h"
 #include "NodeDB.h"
 #include "SPILock.h"
 #include "SafeFile.h"
 #include "gps/RTC.h"
 #include "graphics/draw/MessageRenderer.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "mesh/DeliveryQueue.h"
+#endif
+#include <algorithm>
 #include <cstring> // memcpy
 
 #ifndef MESSAGE_TEXT_POOL_SIZE
@@ -42,16 +47,24 @@ static inline uint16_t storeTextInPool(const char *src, size_t len)
 {
     if (len >= MAX_MESSAGE_SIZE)
         len = MAX_MESSAGE_SIZE - 1;
+    len = MessageTextUtils::completeUtf8Prefix(src, len);
 
+#if defined(TTGO_T_ECHO_PLUS)
+    static_assert(MESSAGE_TEXT_POOL_SIZE >= MAX_MESSAGES_SAVED * MAX_MESSAGE_SIZE, "Message slots must fit retained history");
+    g_poolWritePos = MessageTextUtils::availableTextSlot<MAX_MESSAGES_SAVED>(messageStore.getLiveMessages(), MAX_MESSAGE_SIZE);
+#else
     // Wrap pool if out of space
     if (g_poolWritePos + len + 1 >= MESSAGE_TEXT_POOL_SIZE) {
         g_poolWritePos = 0;
     }
+#endif
 
     uint16_t offset = g_poolWritePos;
     memcpy(&g_messagePool[g_poolWritePos], src, len);
     g_messagePool[g_poolWritePos + len] = '\0';
+#if !defined(TTGO_T_ECHO_PLUS)
     g_poolWritePos += (len + 1);
+#endif
     return offset;
 }
 
@@ -94,6 +107,9 @@ template <typename T> static inline void pushWithLimit(std::deque<T> &queue, T &
 MessageStore::MessageStore(const std::string &label)
 {
     filename = "/Messages_" + label + ".msgs";
+#if defined(TTGO_T_ECHO_PLUS)
+    filename += "2";
+#endif
     resetMessagePool(); // initialize text pool on boot
 }
 
@@ -164,24 +180,37 @@ static inline void autosaveTick(MessageStore *store)
 // Add from incoming/outgoing packet
 const StoredMessage &MessageStore::addFromPacket(const meshtastic_MeshPacket &packet)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    const uint32_t sender = packet.from ? packet.from : nodeDB->getNodeNum();
+    if (packet.id != 0) {
+        for (const auto &existing : liveMessages)
+            if (existing.sender == sender && existing.packetId == packet.id)
+                return existing;
+    }
+#endif
     StoredMessage sm;
     assignTimestamp(sm);
     sm.channelIndex = packet.channel;
 
     const char *payload = reinterpret_cast<const char *>(packet.decoded.payload.bytes);
-    size_t len = strnlen(payload, MAX_MESSAGE_SIZE - 1);
+    size_t len = strnlen(payload, std::min(size_t(packet.decoded.payload.size), size_t(MAX_MESSAGE_SIZE - 1)));
+    len = MessageTextUtils::completeUtf8Prefix(payload, len);
     sm.textOffset = storeTextInPool(payload, len);
     sm.textLength = len;
 
     // Determine sender
     uint32_t localNode = nodeDB->getNodeNum();
     sm.sender = (packet.from == 0) ? localNode : packet.from;
+#if defined(TTGO_T_ECHO_PLUS)
+    sm.unread = packet.from != 0 && packet.from != localNode;
+    sm.packetId = packet.id;
+#endif
 
     sm.dest = packet.to;
 
     bool isDM = (sm.dest != 0 && sm.dest != NODENUM_BROADCAST);
 
-    if (packet.from == 0) {
+    if (packet.from == 0 || packet.from == localNode) {
         sm.type = isDM ? MessageType::DM_TO_US : MessageType::BROADCAST;
         sm.ackStatus = AckStatus::NONE;
     } else {
@@ -198,6 +227,46 @@ const StoredMessage &MessageStore::addFromPacket(const meshtastic_MeshPacket &pa
     return liveMessages.back();
 }
 
+#if defined(TTGO_T_ECHO_PLUS)
+bool MessageStore::containsPacket(uint32_t sender, uint32_t packetId) const
+{
+    if (!packetId)
+        return false;
+    for (const auto &message : liveMessages)
+        if (message.sender == sender && message.packetId == packetId)
+            return true;
+    return false;
+}
+
+void MessageStore::markAcknowledged(uint32_t packetId)
+{
+    for (auto &message : liveMessages) {
+        if (packetId && message.packetId == packetId && message.sender == nodeDB->getNodeNum()) {
+            message.ackStatus = AckStatus::ACKED;
+#if ENABLE_MESSAGE_PERSISTENCE
+            markMessageStoreUnsaved();
+#endif
+        }
+    }
+}
+
+uint8_t MessageStore::unreadCount() const
+{
+    unsigned count = 0;
+    for (const auto &message : liveMessages)
+        count += message.unread;
+    return std::min(count, 99U);
+}
+
+void MessageStore::markMessagesRead(int channel, uint32_t peer)
+{
+    for (auto &message : liveMessages) {
+        if (MessageTextUtils::matchesThread(message.sender, message.dest, message.channelIndex, channel, peer))
+            message.unread = false;
+    }
+}
+#endif
+
 // Outgoing/manual message
 void MessageStore::addFromString(uint32_t sender, uint8_t channelIndex, const std::string &text)
 {
@@ -208,8 +277,9 @@ void MessageStore::addFromString(uint32_t sender, uint8_t channelIndex, const st
 
     sm.sender = sender;
     sm.channelIndex = channelIndex;
-    sm.textOffset = storeTextInPool(text.c_str(), text.size());
-    sm.textLength = text.size();
+    const size_t length = MessageTextUtils::completeUtf8Prefix(text.c_str(), std::min(text.size(), size_t(MAX_MESSAGE_SIZE - 1)));
+    sm.textOffset = storeTextInPool(text.c_str(), length);
+    sm.textLength = length;
 
     // Use the provided destination
     sm.dest = sender;
@@ -259,14 +329,23 @@ static inline void writeMessageRecord(SafeFile &f, const StoredMessage &m)
     rec.text[MAX_MESSAGE_SIZE - 1] = '\0';
 
     f.write(reinterpret_cast<const uint8_t *>(&rec), sizeof(rec));
+#if defined(TTGO_T_ECHO_PLUS)
+    f.write(reinterpret_cast<const uint8_t *>(&m.packetId), sizeof(m.packetId));
+#endif
 }
 
 // Deserialize one StoredMessage from flash; returns false on short read
-static inline bool readMessageRecord(File &f, StoredMessage &m)
+static inline bool readMessageRecord(File &f, StoredMessage &m, bool legacy = false)
 {
     StoredMessageRecord rec = {};
     if (f.readBytes(reinterpret_cast<char *>(&rec), sizeof(rec)) != sizeof(rec))
         return false;
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!legacy && f.readBytes(reinterpret_cast<char *>(&m.packetId), sizeof(m.packetId)) != sizeof(m.packetId))
+        return false;
+#else
+    (void)legacy;
+#endif
 
     m.timestamp = rec.timestamp;
     m.sender = rec.sender;
@@ -321,10 +400,18 @@ void MessageStore::loadFromFlash()
 #ifdef FSCom
     concurrency::LockGuard guard(spiLock);
 
-    if (!FSCom.exists(filename.c_str()))
+    std::string source = filename;
+    bool legacy = false;
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!FSCom.exists(source.c_str())) {
+        source.pop_back(); // Import the original .msgs format once; new saves use .msgs2.
+        legacy = true;
+    }
+#endif
+    if (!FSCom.exists(source.c_str()))
         return;
 
-    auto f = FSCom.open(filename.c_str(), FILE_O_READ);
+    auto f = FSCom.open(source.c_str(), FILE_O_READ);
     if (!f)
         return;
 
@@ -335,7 +422,7 @@ void MessageStore::loadFromFlash()
 
     for (uint8_t i = 0; i < count; ++i) {
         StoredMessage m;
-        if (!readMessageRecord(f, m))
+        if (!readMessageRecord(f, m, legacy))
             break;
         liveMessages.push_back(m);
     }
@@ -356,14 +443,19 @@ void MessageStore::loadFromFlash() {}
 // Clear all messages (RAM + persisted queue)
 void MessageStore::clearAllMessages()
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    DeliveryQueue::forgetInbox(0);
+#endif
     std::deque<StoredMessage>().swap(liveMessages);
     resetMessagePool();
 
 #ifdef FSCom
-    concurrency::LockGuard guard(spiLock);
     SafeFile f(filename.c_str(), false);
     uint8_t count = 0;
-    f.write(&count, 1); // write "0 messages"
+    {
+        concurrency::LockGuard guard(spiLock);
+        f.write(&count, 1); // SafeFile open/close acquire their own lock.
+    }
     f.close();
 #endif
 
@@ -373,34 +465,32 @@ void MessageStore::clearAllMessages()
 #endif
 }
 
-// Internal helper: erase first or last message matching a predicate
-template <typename Predicate> static void eraseIf(std::deque<StoredMessage> &deque, Predicate pred, bool fromBack = false)
+static void forgetStoredMessage(const StoredMessage &message)
 {
-    if (fromBack) {
-        // Iterate from the back and erase all matches from the end
-        for (auto it = deque.rbegin(); it != deque.rend();) {
-            if (pred(*it)) {
-                it = std::deque<StoredMessage>::reverse_iterator(deque.erase(std::next(it).base()));
-            } else {
-                ++it;
-            }
-        }
-    } else {
-        // Manual forward search to erase all matches
-        for (auto it = deque.begin(); it != deque.end();) {
-            if (pred(*it)) {
-                it = deque.erase(it);
-            } else {
-                ++it;
-            }
-        }
+#if defined(TTGO_T_ECHO_PLUS)
+    if (message.packetId && message.sender != nodeDB->getNodeNum())
+        DeliveryQueue::forgetInbox(message.packetId);
+#else
+    (void)message;
+#endif
+}
+
+template <typename Predicate> static void eraseIf(std::deque<StoredMessage> &deque, Predicate pred)
+{
+    for (auto it = deque.begin(); it != deque.end();) {
+        if (pred(*it)) {
+            forgetStoredMessage(*it);
+            it = deque.erase(it);
+        } else
+            ++it;
     }
 }
 
 // Delete oldest message (RAM + persisted queue)
 void MessageStore::deleteOldestMessage()
 {
-    eraseIf(liveMessages, [](StoredMessage &) { return true; });
+    MessageTextUtils::eraseOldestMatching(
+        liveMessages, [](const StoredMessage &) { return true; }, forgetStoredMessage);
     saveToFlash();
 }
 
@@ -408,14 +498,14 @@ void MessageStore::deleteOldestMessage()
 void MessageStore::deleteOldestMessageInChannel(uint8_t channel)
 {
     auto pred = [channel](const StoredMessage &m) { return m.type == MessageType::BROADCAST && m.channelIndex == channel; };
-    eraseIf(liveMessages, pred);
+    MessageTextUtils::eraseOldestMatching(liveMessages, pred, forgetStoredMessage);
     saveToFlash();
 }
 
 void MessageStore::deleteAllMessagesInChannel(uint8_t channel)
 {
     auto pred = [channel](const StoredMessage &m) { return m.type == MessageType::BROADCAST && m.channelIndex == channel; };
-    eraseIf(liveMessages, pred, false /* delete ALL, not just first */);
+    eraseIf(liveMessages, pred);
     saveToFlash();
 }
 
@@ -428,7 +518,7 @@ void MessageStore::deleteAllMessagesWithPeer(uint32_t peer)
         uint32_t other = (m.sender == local) ? m.dest : m.sender;
         return other == peer;
     };
-    eraseIf(liveMessages, pred, false);
+    eraseIf(liveMessages, pred);
     saveToFlash();
 }
 
@@ -441,7 +531,7 @@ void MessageStore::deleteOldestMessageWithPeer(uint32_t peer)
         uint32_t other = (m.sender == nodeDB->getNodeNum()) ? m.dest : m.sender;
         return other == peer;
     };
-    eraseIf(liveMessages, pred);
+    MessageTextUtils::eraseOldestMatching(liveMessages, pred, forgetStoredMessage);
     saveToFlash();
 }
 

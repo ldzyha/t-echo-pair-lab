@@ -54,6 +54,10 @@ uint32_t getValidTime(RTCQuality minQuality, bool local = false);
 
 RTCSetResult readFromRTC();
 
+void applyConfiguredTimezone();
+bool isGPSTimeAcceptable(uint32_t epochSeconds);
+RTCSetResult setRTCFromLocalClient(uint32_t epochSeconds);
+
 #ifdef PIO_UNIT_TESTING
 void setBootRelativeTimeForUnitTest(uint32_t secondsSinceBoot);
 void resetRTCStateForTests();

@@ -5,6 +5,7 @@
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "Default.h"
 #include "GPS.h"
+#include "GPSFixValidity.h"
 #include "GpioLogic.h"
 #include "NodeDB.h"
 #include "PowerMon.h"
@@ -1087,6 +1088,20 @@ void GPS::publishUpdate()
     }
 }
 
+#if defined(TTGO_T_ECHO_PLUS)
+void GPS::invalidateFix(bool badTime)
+{
+    if (badTime && !timeRejected)
+        LOG_WARN("GPS date conflicts with trusted local time; discard fix");
+    if (hasValidLocation || timeRejected != badTime)
+        shouldPublish = true;
+    timeRejected = badTime;
+    hasValidLocation = false;
+    fixQual = 0;
+    p = meshtastic_Position_init_default;
+}
+#endif
+
 int32_t GPS::runOnce()
 {
     if (!GPSInitFinished) {
@@ -1132,6 +1147,17 @@ int32_t GPS::runOnce()
         // if we have received valid NMEA claim we are connected
         setConnected();
     }
+#if defined(TTGO_T_ECHO_PLUS)
+    // A phone/USB time correction can invalidate a fix accepted earlier in this
+    // boot. Do not continue broadcasting it as a fresh current location.
+    if (hasValidLocation && !isGPSTimeAcceptable(p.timestamp))
+        invalidateFix(true);
+    if (GPSFixValidity::expiredAlwaysOn(config.position.fixed_position, config.position.gps_update_interval, hasValidLocation,
+                                        millis(), lastValidFixMsec)) {
+        LOG_WARN("GPS has no fresh fix for 30 seconds; discard current position");
+        invalidateFix(false);
+    }
+#endif
 
     // If we're due for an update, wake the GPS
     if (!config.position.fixed_position && powerState != GPS_ACTIVE && scheduling.isUpdateDue())
@@ -1153,6 +1179,10 @@ int32_t GPS::runOnce()
         // 2. Got a lock for the first time, or 3. Got a lock after turning back on
         bool gotLoc = lookForLocation();
         if (gotLoc) {
+#if defined(TTGO_T_ECHO_PLUS)
+            lastValidFixMsec = millis();
+            timeRejected = false;
+#endif
 #ifdef GPS_DEBUG
             if (!hasValidLocation) { // declare that we have location ASAP
                 LOG_DEBUG("hasValidLocation RISING EDGE");
@@ -1662,11 +1692,16 @@ bool GPS::lookForTime()
     auto ti = reader.time;
     auto d = reader.date;
     if (ti.isValid() && d.isValid()) { // Note: we don't check for updated, because we'll only be called if needed
+#if defined(TTGO_T_ECHO_PLUS)
+        if (!GPSFixValidity::calendar(d.year(), d.month(), d.day(), ti.hour(), ti.minute(), ti.second()) ||
+            ti.age() >= GPS_SOL_EXPIRY_MS || d.age() >= GPS_SOL_EXPIRY_MS)
+            return false;
+#endif
         /* Convert to unix time
 The Unix epoch (or Unix time or POSIX time or Unix timestamp) is the number of seconds that have elapsed since January 1,
 1970 (midnight UTC/GMT), not counting leap seconds (in ISO 8601: 1970-01-01T00:00:00Z).
 */
-        struct tm t;
+        struct tm t = {};
         t.tm_sec = ti.second() + round(ti.age() / 1000);
         t.tm_min = ti.minute();
         t.tm_hour = ti.hour();
@@ -1718,7 +1753,7 @@ bool GPS::lookForLocation()
 #endif
 
     // check if GPS has an acceptable lock
-    if (!hasLock())
+    if (!hasReceiverLock())
         return false;
 
 #ifdef GPS_DEBUG
@@ -1749,6 +1784,25 @@ bool GPS::lookForLocation()
 
     // We know the solution is fresh and valid, so just read the data
     auto loc = reader.location.value();
+
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!GPSFixValidity::calendar(reader.date.year(), reader.date.month(), reader.date.day(), reader.time.hour(),
+                                  reader.time.minute(), reader.time.second())) {
+        invalidateFix(true);
+        return false;
+    }
+    struct tm candidateTime = {};
+    candidateTime.tm_sec = reader.time.second();
+    candidateTime.tm_min = reader.time.minute();
+    candidateTime.tm_hour = reader.time.hour();
+    candidateTime.tm_mday = reader.date.day();
+    candidateTime.tm_mon = reader.date.month() - 1;
+    candidateTime.tm_year = reader.date.year() - 1900;
+    if (!isGPSTimeAcceptable(gm_mktime(&candidateTime))) {
+        invalidateFix(true);
+        return false;
+    }
+#endif
 
     // Bail out EARLY to avoid overwriting previous good data (like #857)
     if (toDegInt(loc.lat) > 900000000) {
@@ -1796,7 +1850,7 @@ bool GPS::lookForLocation()
 #endif
 
     // positional timestamp
-    struct tm t;
+    struct tm t = {};
     t.tm_sec = reader.time.second();
     t.tm_min = reader.time.minute();
     t.tm_hour = reader.time.hour();
@@ -1828,6 +1882,15 @@ bool GPS::lookForLocation()
 }
 
 bool GPS::hasLock()
+{
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!hasValidLocation || timeRejected)
+        return false;
+#endif
+    return hasReceiverLock();
+}
+
+bool GPS::hasReceiverLock()
 {
     // Using GPGGA fix quality indicator
     if (fixQual >= 1 && fixQual <= 5) {

@@ -2,11 +2,19 @@
 #if HAS_SCREEN
 #include "ClockRenderer.h"
 #include "gps/RTC.h"
+#include "gps/TimeFormatUtils.h"
 #include "graphics/ScreenFonts.h"
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/draw/UIRenderer.h"
 #include "graphics/images.h"
 #include "main.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "graphics/draw/MessageRenderer.h"
+#include "mesh/PeerStatus.h"
+#endif
+#if defined(TTGO_T_ECHO_PLUS) && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
+#include "modules/Telemetry/EnvironmentTelemetry.h"
+#endif
 
 #if !MESHTASTIC_EXCLUDE_BLUETOOTH
 #include "nimble/NimbleBluetooth.h"
@@ -149,29 +157,10 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
 
     uint32_t rtc_sec = getValidTime(RTCQuality::RTCQualityDevice, true); // Display local timezone
     char timeString[16];
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-
-    if (rtc_sec > 0) {
-        long hms = rtc_sec % SEC_PER_DAY;
-        hms = (hms + SEC_PER_DAY) % SEC_PER_DAY;
-
-        hour = hms / SEC_PER_HOUR;
-        minute = (hms % SEC_PER_HOUR) / SEC_PER_MIN;
-        second = (hms % SEC_PER_HOUR) % SEC_PER_MIN; // or hms % SEC_PER_MIN
-    }
-
-    bool isPM = hour >= 12;
-    if (config.display.use_12h_clock) {
-        hour %= 12;
-        if (hour == 0) {
-            hour = 12;
-        }
-        snprintf(timeString, sizeof(timeString), "%d:%02d", hour, minute);
-    } else {
-        snprintf(timeString, sizeof(timeString), "%02d:%02d", hour, minute);
-    }
+    const auto clockTime = TimeFormatUtils::formatClock(timeString, sizeof(timeString), rtc_sec, config.display.use_12h_clock);
+    const int hour = clockTime.hour;
+    const int second = clockTime.second;
+    const bool isPM = clockTime.isPM;
 
     // Format seconds string
     char secondString[8];
@@ -183,7 +172,9 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
     static float segmentHeight = SEGMENT_HEIGHT * 0.75f;
 
     if (!scaleInitialized) {
-#ifdef DISPLAY_FORCE_SMALL_FONTS
+#if defined(TTGO_T_ECHO_PLUS)
+        float screenwidth_target_ratio = 0.60f; // Reserve the lower third for readable sensor values.
+#elif defined(DISPLAY_FORCE_SMALL_FONTS)
         float screenwidth_target_ratio = 0.70f; // Target 70% of display width (adjustable)
 #else
         float screenwidth_target_ratio = 0.80f; // Target 80% of display width (adjustable)
@@ -229,7 +220,7 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
     size_t len = strlen(timeString);
     uint16_t timeStringWidth = len * 5;
 
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; clockTime.valid && i < len; i++) {
         char character = timeString[i];
 
         if (character == ':') {
@@ -244,8 +235,15 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
 
     uint16_t hourMinuteTextY = (display->getHeight() / 2) - (((segmentWidth * 2) + (segmentHeight * 3) + 8) / 2) + 2;
 
+    if (!clockTime.valid) {
+        display->setFont(FONT_LARGE);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->drawString(x + display->getWidth() / 2, y + display->getHeight() / 2 - FONT_HEIGHT_LARGE / 2, timeString);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+    }
+
     // iterate over characters in hours:minutes string and draw segmented characters
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; clockTime.valid && i < len; i++) {
         char character = timeString[i];
 
         if (character == ':') {
@@ -278,7 +276,7 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
         }
     }
 
-    if (config.display.use_12h_clock) {
+    if (clockTime.valid && config.display.use_12h_clock) {
         display->drawString(startingHourMinuteTextX + xOffset, (display->getHeight() - hourMinuteTextY) - 1, isPM ? "pm" : "am");
     }
 
@@ -287,10 +285,71 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
     if (scale >= 2.0f) {
         xOffset -= (int)(4.5f * scale);
     }
-    display->drawString(startingHourMinuteTextX + timeStringWidth - xOffset, (display->getHeight() - hourMinuteTextY) - 1,
-                        secondString);
+    if (clockTime.valid)
+        display->drawString(startingHourMinuteTextX + timeStringWidth - xOffset, (display->getHeight() - hourMinuteTextY) - 1,
+                            secondString);
 #endif
 
+#if defined(TTGO_T_ECHO_PLUS)
+    display->setFont(FONT_SMALL);
+    auto *peer = PeerStatus::getPeer();
+    char peerLink[18];
+    const uint32_t heardAge = peer ? PeerStatus::rxAgeSeconds() : UINT32_MAX;
+    if (heardAge == UINT32_MAX)
+        snprintf(peerLink, sizeof(peerLink), "RX ?");
+    else if (heardAge < 60)
+        snprintf(peerLink, sizeof(peerLink), "RX <1m");
+    else if (heardAge < 3600)
+        snprintf(peerLink, sizeof(peerLink), "RX %lum", (unsigned long)(heardAge / 60));
+    else if (heardAge < 24 * 3600)
+        snprintf(peerLink, sizeof(peerLink), "RX %luh", (unsigned long)(heardAge / 3600));
+    else
+        snprintf(peerLink, sizeof(peerLink), "RX >1d");
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->drawString(x + 4, y + 23, peerLink);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->drawString(x + display->getWidth() / 2, y + 23, owner.short_name);
+    char newMessages[16];
+    snprintf(newMessages, sizeof(newMessages), "MSG:%u", MessageRenderer::getNewMessageCount());
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->drawString(x + display->getWidth() - 4, y + 23, newMessages);
+#endif
+
+#if defined(TTGO_T_ECHO_PLUS) && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
+    const auto environment = getLocalEnvironmentSnapshot();
+    const bool fresh = environment.state == LocalEnvironmentState::FRESH && environment.hasSample &&
+                       environment.metrics.has_temperature && environment.metrics.has_relative_humidity &&
+                       environment.metrics.has_barometric_pressure;
+    char conditions[40];
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(FONT_MEDIUM);
+    if (fresh)
+        snprintf(conditions, sizeof(conditions), "BME ~%.1f C", environment.metrics.temperature);
+    else if (environment.state == LocalEnvironmentState::READ_ERROR)
+        snprintf(conditions, sizeof(conditions), "BME error");
+    else if (environment.state == LocalEnvironmentState::STALE)
+        snprintf(conditions, sizeof(conditions), "BME old");
+    else
+        snprintf(conditions, sizeof(conditions), "BME wait");
+    display->drawString(x + display->getWidth() / 2, y + 45, conditions);
+    if (fresh)
+        snprintf(conditions, sizeof(conditions), "RH ~%.0f%%", environment.metrics.relative_humidity);
+    else
+        snprintf(conditions, sizeof(conditions), "RH --");
+    display->drawString(x + display->getWidth() / 2, y + display->getHeight() - 68, conditions);
+    display->setFont(FONT_SMALL);
+    if (fresh)
+        snprintf(conditions, sizeof(conditions), "%.0f hPa / %lus", environment.metrics.barometric_pressure,
+                 (unsigned long)environment.ageSeconds);
+    else if (environment.hasSample && environment.ageSeconds < 3600)
+        snprintf(conditions, sizeof(conditions), "Last sample %lum", (unsigned long)(environment.ageSeconds / 60));
+    else if (environment.hasSample)
+        snprintf(conditions, sizeof(conditions), "Last sample >1h");
+    else
+        snprintf(conditions, sizeof(conditions), "No valid sample");
+    display->drawString(x + display->getWidth() / 2, y + display->getHeight() - 37, conditions);
+
+#endif
     graphics::drawCommonFooter(display, x, y);
 }
 

@@ -5,8 +5,12 @@
 #include "PowerFSM.h"
 #include "RTC.h"
 #include "SPILock.h"
+#include "gps/TrustedTime.h"
 #include "input/InputBroker.h"
 #include "meshUtils.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "mesh/DeliveryQueue.h"
+#endif
 #include <FSCommon.h>
 #include <ctype.h> // for better whitespace handling
 #if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_WIFI
@@ -360,6 +364,9 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
     case meshtastic_AdminMessage_add_contact_tag: {
         LOG_INFO("Client received add_contact command");
         nodeDB->addFromContact(r->add_contact);
+#if defined(TTGO_T_ECHO_PLUS)
+        DeliveryQueue::verifiedContactImported(mp, r->add_contact);
+#endif
         break;
     }
     case meshtastic_AdminMessage_set_favorite_node_tag: {
@@ -445,7 +452,15 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
         tv.tv_sec = r->set_time_only;
         tv.tv_usec = 0;
 
-        perhapsSetRTC(RTCQualityNTP, &tv, false);
+#if defined(TTGO_T_ECHO_PLUS)
+        const bool localClient =
+            isTrustedLocalTimeSource(mp.from, nodeDB->getNodeNum(), mp.via_mqtt,
+                                     mp.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL);
+        if (localClient)
+            setRTCFromLocalClient(r->set_time_only);
+        else
+#endif
+            perhapsSetRTC(RTCQualityNTP, &tv, false);
         break;
     }
     case meshtastic_AdminMessage_enter_dfu_mode_request_tag: {
@@ -657,6 +672,7 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             requiresReboot = false;
         }
         config.device = c.payload_variant.device;
+        applyConfiguredTimezone();
         if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_NONE &&
             (config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
              config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE)) {

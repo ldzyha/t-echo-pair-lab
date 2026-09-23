@@ -9,6 +9,7 @@
 #include "MessageStore.h"
 #include "NodeDB.h"
 #include "buzz.h"
+#include "gps/RTC.h"
 #include "graphics/Screen.h"
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/draw/MessageRenderer.h"
@@ -18,6 +19,9 @@
 #include "main.h"
 #include "mesh/Default.h"
 #include "mesh/MeshTypes.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "mesh/DeliveryQueue.h"
+#endif
 #include "modules/AdminModule.h"
 #include "modules/CannedMessageModule.h"
 #include "modules/ExternalNotificationModule.h"
@@ -472,7 +476,7 @@ void menuHandler::TZPicker()
             strncpy(config.device.tzdef, option.value, sizeof(config.device.tzdef));
             config.device.tzdef[sizeof(config.device.tzdef) - 1] = '\0';
 
-            setenv("TZ", config.device.tzdef, 1);
+            applyConfiguredTimezone();
             service->reloadConfig(SEGMENT_CONFIG);
         });
 
@@ -517,7 +521,18 @@ void menuHandler::clockMenu()
 }
 void menuHandler::messageResponseMenu()
 {
-    enum optionsNumbers { Back = 0, ViewMode, DeleteMenu, ReplyMenu, MuteChannel, Aloud, enumEnd };
+    enum optionsNumbers {
+        Back = 0,
+        ViewMode,
+        DeleteMenu,
+        ReplyMenu,
+        MuteChannel,
+        Aloud,
+        NextText,
+        PreviousText,
+        CancelPending,
+        enumEnd
+    };
 
     static const char *optionsArray[enumEnd];
     static int optionsEnumArray[enumEnd];
@@ -529,6 +544,14 @@ void menuHandler::messageResponseMenu()
     optionsArray[options] = "Back";
     optionsEnumArray[options++] = Back;
 
+#if defined(TTGO_T_ECHO_PLUS)
+    optionsArray[options] = "Next text";
+    optionsEnumArray[options++] = NextText;
+    optionsArray[options] = "Previous text";
+    optionsEnumArray[options++] = PreviousText;
+    optionsArray[options] = "Cancel pending";
+    optionsEnumArray[options++] = CancelPending;
+#endif
     // New Reply submenu (replaces Preset and Freetext directly in this menu)
     optionsArray[options] = "Reply";
     optionsEnumArray[options++] = ReplyMenu;
@@ -571,7 +594,15 @@ void menuHandler::messageResponseMenu()
 
         LOG_DEBUG("[ReplyCtx] mode=%d ch=%d peer=0x%08x", (int)mode, ch, (unsigned int)peer);
 
-        if (selected == ViewMode) {
+        if (selected == CancelPending) {
+#if defined(TTGO_T_ECHO_PLUS)
+            DeliveryQueue::cancelAll();
+            screen->runNow();
+#endif
+        } else if (selected == NextText || selected == PreviousText) {
+            graphics::MessageRenderer::nudgeScroll(selected == NextText ? 1 : -1);
+            screen->runNow();
+        } else if (selected == ViewMode) {
             menuHandler::menuQueue = menuHandler::MessageViewModeMenu;
             screen->runNow();
 

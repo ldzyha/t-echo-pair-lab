@@ -65,6 +65,7 @@ static const uint8_t A0 = PIN_A0;
 
 // RTC interrupt
 #define PIN_RTC_INT (0 + 16)
+#define PCF8563_RTC 0x51
 
 // QSPI flash
 #define PIN_QSPI_SCK (32 + 14)

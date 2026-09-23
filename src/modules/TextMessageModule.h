@@ -21,6 +21,10 @@ class TextMessageModule : public SinglePortModule, public Observable<const mesht
     TextMessageModule() : SinglePortModule("text", meshtastic_PortNum_TEXT_MESSAGE_APP) {}
 
     bool recentlySeen(uint32_t id);
+#if defined(TTGO_T_ECHO_PLUS)
+    // Called only after DeliveryQueue authenticates and durably accepts a text.
+    void receiveDeferred(const meshtastic_MeshPacket &packet) { handleReceived(packet); }
+#endif
 
   protected:
     /** Called to handle a particular incoming message

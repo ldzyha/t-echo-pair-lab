@@ -84,6 +84,12 @@ class StatusLEDModule : private concurrency::OSThread
     uint32_t lastUserbuttonTime = 0;
     uint32_t POWER_LED_starttime = 0;
     bool doing_fast_blink = false;
+#if defined(TTGO_T_ECHO_PLUS)
+    // 0 unknown, 1 recently heard, 2 silent. Pulse only when this changes.
+    uint8_t peerState = 0;
+    uint8_t peerPulsePin = 0;
+    uint32_t peerPulseStarted = 0;
+#endif
 #ifdef LED_LORA
     static constexpr uint32_t LORA_RX_LED_FLASH_MS = 100;
     bool LORA_LED_state = LED_STATE_OFF;

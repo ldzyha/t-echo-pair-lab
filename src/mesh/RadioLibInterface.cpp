@@ -5,6 +5,9 @@
 #include "SPILock.h"
 #include "Throttle.h"
 #include "configuration.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "DeliveryQueue.h"
+#endif
 #include "error.h"
 #include "main.h"
 #include "mesh-pb-constants.h"
@@ -522,6 +525,9 @@ void RadioLibInterface::completeSending()
         if (!isFromUs(p))
             txRelay++;
         printPacket("Completed sending", p);
+#if defined(TTGO_T_ECHO_PLUS)
+        DeliveryQueue::radioComplete(p->id);
+#endif
 
         // We are done sending that packet, release it
         packetPool.release(p);

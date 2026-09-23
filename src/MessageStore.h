@@ -67,6 +67,10 @@ struct StoredMessage {
     MessageType type;     // Derived from dest (explicit classification)
     bool isBootRelative;  // true = millis()/1000 fallback; false = epoch/RTC absolute
     AckStatus ackStatus;  // Delivery status (only meaningful for our own sent messages)
+#if defined(TTGO_T_ECHO_PLUS)
+    bool unread = false;   // RAM only; read state is not synchronized with phone apps.
+    uint32_t packetId = 0; // Stable client message ID, persisted by the Plus v2 history format.
+#endif
 
     // Text storage metadata — rebuilt from flash at boot
     uint16_t textOffset; // Offset into global text pool (valid only after loadFromFlash())
@@ -110,6 +114,12 @@ class MessageStore
 
     // Unified accessor (for UI code, defaults to RAM buffer)
     const std::deque<StoredMessage> &getMessages() const { return liveMessages; }
+#if defined(TTGO_T_ECHO_PLUS)
+    uint8_t unreadCount() const;
+    void markMessagesRead(int channel = -1, uint32_t peer = 0);
+    bool containsPacket(uint32_t sender, uint32_t packetId) const;
+    void markAcknowledged(uint32_t packetId);
+#endif
 
     // Helper filters for future use
     std::deque<StoredMessage> getChannelMessages(uint8_t channel) const; // Only broadcast messages on a channel

@@ -38,6 +38,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "draw/MessageRenderer.h"
 #include "draw/NodeListRenderer.h"
 #include "draw/NotificationRenderer.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "draw/PeerRenderer.h"
+#endif
 #include "draw/UIRenderer.h"
 #include "modules/CannedMessageModule.h"
 
@@ -1210,7 +1213,11 @@ void Screen::setFrames(FrameFocus focus)
 #ifdef USE_EINK
     if (!hiddenFrames.nodelist_bearings) {
         fsi.positions.nodelist_bearings = numframes;
+#if defined(TTGO_T_ECHO_PLUS)
+        normalFrames[numframes++] = graphics::PeerRenderer::drawPeerFrame;
+#else
         normalFrames[numframes++] = graphics::NodeListRenderer::drawNodeListWithCompasses;
+#endif
         indicatorIcons.push_back(icon_list);
     }
 #endif
@@ -1328,7 +1335,12 @@ void Screen::setFrames(FrameFocus focus)
     // Focus on a specific frame, in the frame set we just created
     switch (focus) {
     case FOCUS_DEFAULT:
+#if defined(TTGO_T_ECHO_PLUS)
+        // T-Echo Plus starts on the clock face when a time source is available.
+        ui->switchToFrame(fsi.positions.clock != 255 ? fsi.positions.clock : fsi.positions.deviceFocused);
+#else
         ui->switchToFrame(fsi.positions.deviceFocused);
+#endif
         break;
     case FOCUS_FAULT:
         ui->switchToFrame(fsi.positions.fault);
@@ -1645,6 +1657,18 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
 // Handles when message is received; will jump to text message frame.
 int Screen::handleTextMessage(const meshtastic_MeshPacket *packet)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    hasUnreadMessage = graphics::MessageRenderer::getNewMessageCount() > 0;
+    if (packet->from == 0 || packet->from == nodeDB->getNodeNum()) {
+        setFrames(FOCUS_PRESERVE);
+        return 0;
+    }
+    if (packet->to == 0 || packet->to == NODENUM_BROADCAST) {
+        const auto &channel = channels.getByIndex(packet->channel);
+        if (channel.settings.has_module_settings && channel.settings.module_settings.is_muted)
+            return 0;
+    }
+#endif
     if (showingNormalScreen) {
         if (packet->from == 0) {
             // Outgoing message (likely sent from phone)
@@ -1659,6 +1683,17 @@ int Screen::handleTextMessage(const meshtastic_MeshPacket *packet)
             devicestate.has_rx_text_message = true; // Needed to include the message frame
             hasUnreadMessage = true;                // Enables mail icon in the header
             setFrames(FOCUS_PRESERVE);              // Refresh frame list without switching view (no-op during text_input)
+
+#if defined(TTGO_T_ECHO_PLUS)
+            // Show the message itself immediately on this e-ink device. Keep
+            // ExternalNotification enabled so its haptic alert still runs.
+            if (framesetInfo.positions.textMessage != 255) {
+                ui->switchToFrame(framesetInfo.positions.textMessage);
+                setOn(true);
+                setFastFramerate();
+            }
+            return 0;
+#endif
 
             // Only wake/force display if the configuration allows it
             if (shouldWakeOnReceivedMessage()) {
@@ -1843,6 +1878,15 @@ int Screen::handleInputEvent(const InputEvent *event)
     }
     // UP/DOWN in message screen scrolls through message threads
     if (ui->getUiState()->currentFrame == framesetInfo.positions.textMessage) {
+#if defined(TTGO_T_ECHO_PLUS)
+        if (event->inputEvent == INPUT_BROKER_USER_PRESS) {
+            // Closing a viewed conversation acknowledges its unread counter.
+            graphics::MessageRenderer::markNewMessagesRead();
+            setFrames(FOCUS_CLOCK);
+            forceDisplay();
+            return 0;
+        }
+#endif
 
         if (event->inputEvent == INPUT_BROKER_UP) {
             if (messageStore.getMessages().empty()) {

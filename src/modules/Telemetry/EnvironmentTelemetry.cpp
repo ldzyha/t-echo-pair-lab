@@ -22,6 +22,24 @@
 #include "target_specific.h"
 #include <OLEDDisplay.h>
 
+#if defined(TTGO_T_ECHO_PLUS)
+static LocalEnvironmentCache<meshtastic_Telemetry> localEnvironmentCache;
+
+LocalEnvironmentSnapshot getLocalEnvironmentSnapshot()
+{
+    LocalEnvironmentSnapshot result;
+    meshtastic_Telemetry measurement;
+    const uint32_t now = millis();
+    result.hasSample = localEnvironmentCache.copyFresh(&measurement, now);
+    if (result.hasSample)
+        result.metrics = measurement.variant.environment_metrics;
+    result.ageSeconds = localEnvironmentCache.ageSeconds(now);
+    result.state = localEnvironmentCache.state(now);
+    return result;
+}
+
+#endif
+
 #if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR_EXTERNAL
 
 // Sensors
@@ -307,7 +325,19 @@ int32_t EnvironmentTelemetryModule::runOnce()
         }
         // it's possible to have this module enabled, only for displaying values on the screen.
         // therefore, we should only enable the sensor loop if measurement is also enabled
+#if defined(TTGO_T_ECHO_PLUS)
+        if (result == UINT32_MAX) {
+            if (moduleConfig.telemetry.environment_measurement_enabled || ENVIRONMENTAL_TELEMETRY_MODULE_ENABLE)
+                sampleLocalEnvironment();
+            return disable();
+        }
+        meshStartDelayMs = setStartDelay();
+        meshStartDelayBeganMs = millis();
+        sampleLocalEnvironment();
+        return localEnvironmentCache.timeUntilAttemptMs(millis());
+#else
         return result == UINT32_MAX ? disable() : setStartDelay();
+#endif
     } else {
         // if we somehow got to a second run of this module with measurement disabled, then just wait forever
         if (!moduleConfig.telemetry.environment_measurement_enabled && !ENVIRONMENTAL_TELEMETRY_MODULE_ENABLE) {
@@ -321,25 +351,35 @@ int32_t EnvironmentTelemetryModule::runOnce()
             }
         }
 
+#if defined(TTGO_T_ECHO_PLUS)
+        sampleLocalEnvironment();
+#endif
         uint32_t lastTelemetry =
             transmitHistory ? transmitHistory->getLastSentToMeshMillis(TX_HISTORY_KEY_ENVIRONMENT_TELEMETRY) : 0;
-        if (((lastTelemetry == 0) ||
+        if (
+#if defined(TTGO_T_ECHO_PLUS)
+            !Throttle::isWithinTimespanMs(meshStartDelayBeganMs, meshStartDelayMs) &&
+#endif
+            ((lastTelemetry == 0) ||
              !Throttle::isWithinTimespanMs(lastTelemetry, Default::getConfiguredOrDefaultMsScaled(
                                                               moduleConfig.telemetry.environment_update_interval,
                                                               default_telemetry_broadcast_interval_secs, numOnlineNodes))) &&
             airTime->isTxAllowedChannelUtil(config.device.role != meshtastic_Config_DeviceConfig_Role_SENSOR) &&
             airTime->isTxAllowedAirUtil()) {
-            sendTelemetry();
-            if (transmitHistory)
+            const bool queued = sendTelemetry();
+            if (queued && transmitHistory)
                 transmitHistory->setLastSentToMesh(TX_HISTORY_KEY_ENVIRONMENT_TELEMETRY);
         } else if (((lastSentToPhone == 0) || !Throttle::isWithinTimespanMs(lastSentToPhone, sendToPhoneIntervalMs)) &&
                    (service->isToPhoneQueueEmpty())) {
             // Just send to phone when it's not our time to send to mesh yet
             // Only send while queue is empty (phone assumed connected)
-            sendTelemetry(NODENUM_BROADCAST, true);
-            lastSentToPhone = millis();
+            if (sendTelemetry(NODENUM_BROADCAST, true))
+                lastSentToPhone = millis();
         }
     }
+#if defined(TTGO_T_ECHO_PLUS)
+    result = min(result, localEnvironmentCache.timeUntilAttemptMs(millis()));
+#endif
     return min(sendToPhoneIntervalMs, result);
 }
 
@@ -351,6 +391,45 @@ bool EnvironmentTelemetryModule::wantUIFrame()
 #if HAS_SCREEN
 void EnvironmentTelemetryModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    display->clear();
+    graphics::drawCommonHeader(display, x, y, "Local BME");
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(FONT_SMALL);
+    const auto sample = getLocalEnvironmentSnapshot();
+    const auto &values = sample.metrics;
+    const int centerX = x + display->getWidth() / 2;
+    char line[48];
+    if (sample.ageSeconds == UINT32_MAX)
+        snprintf(line, sizeof(line), "%s / no sample", owner.short_name);
+    else if (sample.ageSeconds < 60)
+        snprintf(line, sizeof(line), "%s / %lus ago", owner.short_name, (unsigned long)sample.ageSeconds);
+    else
+        snprintf(line, sizeof(line), "%s / %lum ago", owner.short_name, (unsigned long)(sample.ageSeconds / 60));
+    display->drawString(centerX, y + 28, line);
+
+    if (sample.state == LocalEnvironmentState::FRESH && sample.hasSample && values.has_temperature &&
+        values.has_relative_humidity && values.has_barometric_pressure) {
+        display->setFont(FONT_MEDIUM);
+        snprintf(line, sizeof(line), "%.1f C", values.temperature);
+        display->drawString(centerX, y + 53, line);
+        snprintf(line, sizeof(line), "RH %.0f%%", values.relative_humidity);
+        display->drawString(centerX, y + 85, line);
+        snprintf(line, sizeof(line), "%.0f hPa", values.barometric_pressure);
+        display->drawString(centerX, y + 117, line);
+        display->setFont(FONT_SMALL);
+        display->drawString(centerX, y + 155, "Local sensor reading");
+    } else {
+        const char *status = sample.state == LocalEnvironmentState::WAITING ? "Waiting"
+                             : sample.state == LocalEnvironmentState::STALE ? "Not updated"
+                                                                            : "Read error";
+        display->setFont(FONT_MEDIUM);
+        display->drawString(centerX, y + 65, status);
+        display->setFont(FONT_SMALL);
+        display->drawString(centerX, y + 105, "No current values");
+    }
+    graphics::drawCommonFooter(display, x, y);
+#else
     // === Setup display ===
     display->clear();
     display->setFont(FONT_SMALL);
@@ -498,6 +577,7 @@ void EnvironmentTelemetryModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiSt
         currentY += rowHeight;
     }
     graphics::drawCommonFooter(display, x, y);
+#endif
 }
 #endif
 
@@ -524,17 +604,46 @@ bool EnvironmentTelemetryModule::handleReceivedProtobuf(const meshtastic_MeshPac
         LOG_INFO("(Received from %s): radiation=%fµR/h", sender, t->variant.environment_metrics.radiation);
 
 #endif
+#if !defined(TTGO_T_ECHO_PLUS)
         // release previous packet before occupying a new spot
         if (lastMeasurementPacket != nullptr)
             packetPool.release(lastMeasurementPacket);
 
         lastMeasurementPacket = packetPool.allocCopy(mp);
+#endif
     }
 
     return false; // Let others look at this message also if they want
 }
 
 bool EnvironmentTelemetryModule::getEnvironmentTelemetry(meshtastic_Telemetry *m)
+{
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!moduleConfig.telemetry.environment_measurement_enabled && !ENVIRONMENTAL_TELEMETRY_MODULE_ENABLE)
+        return false;
+    return localEnvironmentCache.copyFresh(m, millis());
+#else
+    return readEnvironmentTelemetry(m);
+#endif
+}
+
+#if defined(TTGO_T_ECHO_PLUS)
+void EnvironmentTelemetryModule::sampleLocalEnvironment()
+{
+    localEnvironmentCache.sampleIfDue(millis(), [this](meshtastic_Telemetry *measurement) {
+        const bool valid = readEnvironmentTelemetry(measurement);
+        const auto &values = measurement->variant.environment_metrics;
+        if (valid)
+            LOG_INFO("Local environment read: ms=%lu time=%lu T=%.2f RH=%.2f P=%.2f", (unsigned long)millis(),
+                     (unsigned long)measurement->time, values.temperature, values.relative_humidity, values.barometric_pressure);
+        else
+            LOG_WARN("Local environment read failed: ms=%lu; current values invalidated", (unsigned long)millis());
+        return valid;
+    });
+}
+#endif
+
+bool EnvironmentTelemetryModule::readEnvironmentTelemetry(meshtastic_Telemetry *m)
 {
     bool valid = false;
     bool hasSensor = false;
@@ -644,11 +753,13 @@ bool EnvironmentTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
             p->priority = meshtastic_MeshPacket_Priority_RELIABLE;
         else
             p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+#if !defined(TTGO_T_ECHO_PLUS)
         // release previous packet before occupying a new spot
         if (lastMeasurementPacket != nullptr)
             packetPool.release(lastMeasurementPacket);
 
         lastMeasurementPacket = packetPool.allocCopy(*p);
+#endif
         if (phoneOnly) {
             LOG_INFO("Send packet to phone");
             service->sendToPhone(p);

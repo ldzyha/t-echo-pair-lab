@@ -5,6 +5,7 @@
 #pragma once
 
 #include "BaseTelemetryModule.h"
+#include "LocalEnvironmentCache.h"
 
 #ifndef ENVIRONMENTAL_TELEMETRY_MODULE_ENABLE
 #define ENVIRONMENTAL_TELEMETRY_MODULE_ENABLE 0
@@ -16,6 +17,17 @@
 #include "detect/ScanI2CConsumer.h"
 #include <OLEDDisplay.h>
 #include <OLEDDisplayUi.h>
+
+#if defined(TTGO_T_ECHO_PLUS)
+struct LocalEnvironmentSnapshot {
+    meshtastic_EnvironmentMetrics metrics = meshtastic_EnvironmentMetrics_init_zero;
+    uint32_t ageSeconds = UINT32_MAX;
+    LocalEnvironmentState state = LocalEnvironmentState::WAITING;
+    bool hasSample = false;
+};
+
+LocalEnvironmentSnapshot getLocalEnvironmentSnapshot();
+#endif
 
 class EnvironmentTelemetryModule : private concurrency::OSThread,
                                    public ScanI2CConsumer,
@@ -52,11 +64,15 @@ class EnvironmentTelemetryModule : private concurrency::OSThread,
     @return true if it contains valid data
     */
     bool getEnvironmentTelemetry(meshtastic_Telemetry *m);
+    bool readEnvironmentTelemetry(meshtastic_Telemetry *m);
+#if defined(TTGO_T_ECHO_PLUS)
+    void sampleLocalEnvironment();
+#endif
     virtual meshtastic_MeshPacket *allocReply() override;
     /**
      * Send our Telemetry into the mesh
      */
-    bool sendTelemetry(NodeNum dest = NODENUM_BROADCAST, bool wantReplies = false);
+    bool sendTelemetry(NodeNum dest = NODENUM_BROADCAST, bool phoneOnly = false);
 
     virtual AdminMessageHandleResult handleAdminMessageForModule(const meshtastic_MeshPacket &mp,
                                                                  meshtastic_AdminMessage *request,
@@ -69,6 +85,10 @@ class EnvironmentTelemetryModule : private concurrency::OSThread,
     meshtastic_MeshPacket *lastMeasurementPacket;
     uint32_t sendToPhoneIntervalMs = SECONDS_IN_MINUTE * 1000; // Send to phone every minute
     uint32_t lastSentToPhone = 0;
+#if defined(TTGO_T_ECHO_PLUS)
+    uint32_t meshStartDelayMs = 0;
+    uint32_t meshStartDelayBeganMs = 0;
+#endif
 };
 
 #endif
