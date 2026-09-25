@@ -1,0 +1,2 @@
+sample,radio,selection,profile_at_acquisition,reference_temperature_c,reference_rh_percent,raw_temperature_c,raw_rh_percent,mcu_c,filtered_mcu_c,reported_temperature_c,reported_rh_percent,pressure_hpa,usb,heat_c,rh_gain,capture_call_latency_seconds,reference_basis
+warm_dry_1,B,fit,TH4-B,26.4,38,43.27,19.84,45.75,45.315,29.32,42.24,990.13,1,16.87,0.750614,5.747,user submitted before capture; full message-to-sample delay unknown

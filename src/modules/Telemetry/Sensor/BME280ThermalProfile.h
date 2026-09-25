@@ -14,12 +14,22 @@ constexpr Bme280ThermalPoint T_ECHO_BME280_THERMAL_POINTS[] = {
 constexpr size_t T_ECHO_BME280_THERMAL_POINT_COUNT =
     sizeof(T_ECHO_BME280_THERMAL_POINTS) / sizeof(T_ECHO_BME280_THERMAL_POINTS[0]);
 
+// TH5 extends only Radio B using one paired warm/dry observation; see docs/CALIBRATION-TH5.md.
+constexpr Bme280ThermalPoint T_ECHO_BME280_B_POINTS[] = {
+    T_ECHO_BME280_THERMAL_POINTS[0], T_ECHO_BME280_THERMAL_POINTS[1], T_ECHO_BME280_THERMAL_POINTS[2],
+    T_ECHO_BME280_THERMAL_POINTS[3], T_ECHO_BME280_THERMAL_POINTS[4], T_ECHO_BME280_THERMAL_POINTS[5],
+    T_ECHO_BME280_THERMAL_POINTS[6], T_ECHO_BME280_THERMAL_POINTS[7], {45.315000f, 16.870000f, 0.750614f, 0.0f},
+};
+
 struct Bme280ThermalProfile {
     const char *name;
     Bme280SensorCalibration calibration;
+    const Bme280ThermalPoint *points = T_ECHO_BME280_THERMAL_POINTS;
+    size_t count = T_ECHO_BME280_THERMAL_POINT_COUNT;
 };
 
-constexpr Bme280ThermalProfile T_ECHO_BME280_B{"TH4-B", {0.0f, 1.0f, 0.0f}};
+constexpr Bme280ThermalProfile T_ECHO_BME280_B{
+    "TH5-B", {0.0f, 1.0f, 0.0f}, T_ECHO_BME280_B_POINTS, sizeof(T_ECHO_BME280_B_POINTS) / sizeof(T_ECHO_BME280_B_POINTS[0])};
 // Radio A has one warming run; the shared curve shape is provisional for this device.
 constexpr Bme280ThermalProfile T_ECHO_BME280_A{"TH4-A", {0.764661f, 1.094644f, 0.0f}};
 

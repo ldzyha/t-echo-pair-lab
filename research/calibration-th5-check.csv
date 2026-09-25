@@ -1,0 +1,5 @@
+sample,radio,profile,selection,raw_temperature_c,raw_rh_percent,mcu_c,filtered_mcu_c,reported_temperature_c,reported_rh_percent,pressure_hpa,usb,heat_c,rh_gain,last_reference_temperature_c,last_reference_rh_percent,reference_basis
+1,B,TH5-B,post_install_not_used_for_fit,43.05,19.86,45.5,44.935,26.4,38.52,990.15,1.0,16.65,0.768881,26.4,38,last user report; not confirmed independently during capture
+2,B,TH5-B,post_install_not_used_for_fit,43.04,19.91,45.5,45.157,26.26,38.37,990.21,1.0,16.78,0.758199,26.4,38,last user report; not confirmed independently during capture
+3,B,TH5-B,post_install_not_used_for_fit,43.13,19.78,45.75,45.39,26.26,37.92,990.06,1.0,16.87,0.750614,26.4,38,last user report; not confirmed independently during capture
+4,B,TH5-B,post_install_not_used_for_fit,43.12,19.84,45.5,45.433,26.25,38.04,990.15,1.0,16.87,0.750614,26.4,38,last user report; not confirmed independently during capture

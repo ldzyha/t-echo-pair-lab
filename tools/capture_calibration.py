@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture one fresh TH4 sensor log with a manual reference; no config changes."""
+"""Capture one fresh TH4/TH5 sensor log with a manual reference; no config changes."""
 
 import argparse
 from datetime import datetime, timezone
@@ -14,7 +14,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 NUMBER = r"(?:[-+]?\d+(?:\.\d+)?|nan)"
 SAMPLE = re.compile(
-    rf"BME280 (TH4-[\w-]+): rawT=({NUMBER}) rawRH=({NUMBER}) "
+    rf"BME280 (TH[45]-[\w-]+): rawT=({NUMBER}) rawRH=({NUMBER}) "
     rf"die=({NUMBER}) heat=({NUMBER}) T=({NUMBER}) RH=({NUMBER}) "
     rf"P=({NUMBER}) USB=(\d) known=(\d)",
     re.IGNORECASE,
@@ -112,7 +112,7 @@ def main():
             sample.clear()
             sample.update(parsed)
             sample["capture_latency_seconds"] = round(time.monotonic() - began, 3)
-            if parsed["profile"].upper() == "TH4-RAW":
+            if parsed["profile"].upper().endswith("-RAW"):
                 ready.set()
             return
         match = CURVE.search(line)
@@ -143,7 +143,7 @@ def main():
         identified.set()
         if not ready.wait(args.timeout):
             raise RuntimeError(
-                "No complete fresh TH4 log. Check firmware/log stream and port ownership."
+                "No complete fresh TH4/TH5 log. Check firmware/log stream and port ownership."
             )
         record["sample"] = sample
         record["status"] = "captured"

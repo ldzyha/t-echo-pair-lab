@@ -78,7 +78,7 @@ bool BME280Sensor::initDevice(TwoWire *bus, ScanI2C::FoundDevice *dev)
 #if defined(TTGO_T_ECHO_PLUS)
     thermalProfile = bme280ProfileForNode(nodeDB ? nodeDB->getNodeNum() : 0);
     if (thermalProfile) {
-        thermalModel = Bme280ThermalModel(T_ECHO_BME280_THERMAL_POINTS, T_ECHO_BME280_THERMAL_POINT_COUNT);
+        thermalModel = Bme280ThermalModel(thermalProfile->points, thermalProfile->count);
         LOG_INFO("BME280 %s: experimental board profile, die filter=%.0fs, no boot heat ramp", thermalProfile->name,
                  Bme280ThermalModel::DIE_FILTER_MS / 1000.0f);
         LOG_INFO("BME280 calibration: T_offset=%.2f RH_gain=%.4f RH_offset=%.2f", thermalProfile->calibration.temperatureOffsetC,

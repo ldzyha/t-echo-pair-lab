@@ -114,6 +114,51 @@ static void testDeviceSelectionAndIntermediateSample()
     near(n.barometric_pressure, m.barometric_pressure);
 }
 
+static void testIndependentWarmExtension()
+{
+    const auto *radioB = bme280ProfileForNode(0x55667788);
+    const auto *radioA = bme280ProfileForNode(0x11223344);
+    assert(radioB && radioA);
+    // The new observation must not recalibrate the other physical sensor.
+    for (float die = 20; die <= 55; die += .25f) {
+        Bme280ThermalModel old(T_ECHO_BME280_THERMAL_POINTS, T_ECHO_BME280_THERMAL_POINT_COUNT);
+        Bme280ThermalModel a(radioA->points, radioA->count);
+        near(a.update(0, die), old.update(0, die));
+        near(a.getHumidityGain(), old.getHumidityGain());
+        if (die <= 40.333333f) {
+            Bme280ThermalModel b(radioB->points, radioB->count);
+            near(b.update(0, die), old.update(0, die));
+            near(b.getHumidityGain(), old.getHumidityGain());
+        }
+    }
+
+    struct Metrics {
+        float temperature, relative_humidity, barometric_pressure;
+        bool has_temperature, has_relative_humidity, has_barometric_pressure;
+    } m{};
+    Bme280ThermalModel b(radioB->points, radioB->count);
+    const float heat = b.update(0, 45.315f);
+    auto calibration = radioB->calibration;
+    calibration.humidityGain *= b.getHumidityGain();
+    assert(correctBme280Sample({43.27f, 19.84f, 990.13f}, m, heat, calibration));
+    near(m.temperature, 26.4f);
+    near(m.relative_humidity, 38, .01f);
+    near(m.barometric_pressure, 990.13f);
+    // A changed raw conversion must reach the output, even at a fitted knot.
+    assert(correctBme280Sample({44.27f, 20.84f, 991.13f}, m, heat, calibration));
+    near(m.temperature, 27.4f);
+    assert(m.relative_humidity > 38);
+    near(m.barometric_pressure, 991.13f);
+
+    Bme280ThermalModel middle(radioB->points, radioB->count);
+    near(middle.update(0, (40.333333f + 45.315f) / 2), (13.946667f + 16.87f) / 2);
+    near(middle.getHumidityGain(), (.989799f + .750614f) / 2);
+    Bme280ThermalModel high(radioB->points, radioB->count);
+    near(high.update(0, 60), 16.87f);
+    near(high.getHumidityGain(), .750614f);
+    assert(high.getRange() == 1);
+}
+
 int main()
 {
     testInterpolationAndRestart();
@@ -121,6 +166,7 @@ int main()
     testRangeAndInvalidRecovery();
     testCalibrationReplay();
     testDeviceSelectionAndIntermediateSample();
+    testIndependentWarmExtension();
     std::puts("PASS: board intervals, independent RH, warm restart, cooling, rollover, invalid recovery, profile identity, "
-              "held-out replay");
+              "held-out replay, separate warm extension");
 }
