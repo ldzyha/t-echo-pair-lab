@@ -362,39 +362,114 @@ void testPhoneReconnectReplay()
     restart(false);
     for (uint32_t n = 1; n <= 22; ++n)
         receive(incoming(DATA, 500, n, 1000 + n, "saved while phone absent"));
+    assert(state.inboxCount == 1);
     const auto disk = fakeFS.files;
     const auto radioCount = transmissions.size();
     const auto uiCount = delivered.size();
-    PhoneReplay phone, secondPhone;
+    PhoneReplay phone, secondPhone, bootPhone;
     meshtastic_MeshPacket replay = meshtastic_MeshPacket_init_default;
-    PhoneReplay bootPhone;
     rememberForPhone(bootPhone, delivered.back());
     rememberForPhone(bootPhone, delivered.back());
-    assert(bootPhone.count == 1); // boot/live queue already supplied the newest message
-    size_t backfilled = 0;
-    while (nextForPhone(bootPhone, replay)) {
-        assert(replay.id != 1022);
-        ++backfilled;
-    }
-    assert(backfilled == 19);
-    for (uint32_t n = 3; n <= 22; ++n) {
-        assert(nextForPhone(phone, replay));
-        assert(replay.id == 1000 + n && replay.from == PeerStatus::NODE_A && replay.to == PeerStatus::NODE_B);
-        assert(replay.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP);
-        assert(replay.pki_encrypted && !replay.want_ack);
-        assert(replay.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL);
-    }
+    assert(!nextForPhone(bootPhone, replay));
+    assert(nextForPhone(phone, replay));
+    assert(replay.id == 1022 && replay.from == PeerStatus::NODE_A && replay.to == PeerStatus::NODE_B);
+    assert(replay.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP);
+    assert(replay.pki_encrypted && !replay.want_ack);
+    assert(replay.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL);
     assert(!nextForPhone(phone, replay) && phone.complete);
-    assert(nextForPhone(secondPhone, replay) && replay.id == 1003); // independent client/session
+    assert(nextForPhone(secondPhone, replay) && replay.id == 1022);
     phone = {};
-    assert(nextForPhone(phone, replay) && replay.id == 1003); // reconnect retains original ID
+    assert(nextForPhone(phone, replay) && replay.id == 1022);
     assert(fakeFS.files == disk && transmissions.size() == radioCount && delivered.size() == uiCount);
-    forgetInbox(1004);
+    restart(true);
+    assert(delivered.size() == 1 && delivered.back().id == 1022 && transmissions.empty());
+    phone = {};
+    assert(nextForPhone(phone, replay) && replay.id == 1022);
+    receive(incoming(DATA, 500, 1, 1001)); // An evicted old message cannot reappear.
+    assert(delivered.size() == 1 && state.inboxCount == 1);
+    forgetInbox(1022);
     harness.runOnce();
-    assert(nextForPhone(phone, replay) && replay.id == 1005); // deleted messages stay deleted
     restart(true);
     phone = {};
-    assert(nextForPhone(phone, replay) && replay.id == 1003 && transmissions.empty());
+    assert(!nextForPhone(phone, replay) && delivered.empty());
+}
+
+void testLegacyInboxMigration()
+{
+    using namespace DeliveryQueue;
+    restart(false);
+    for (uint32_t id = 1; id <= CAP; ++id) {
+        assert(submit(message(id, "pending across migration")));
+        harness.runOnce();
+    }
+    completeRadio();
+    const auto original = state;
+    auto legacy = [&](uint32_t gen, size_t count, bool corruptFirst = false) {
+        std::array<uint8_t, STORAGE_CAP> bytes{};
+        Writer writer{bytes.data() + SNAPSHOT_HEADER, bytes.size() - SNAPSHOT_HEADER};
+        writer.u32(original.self);
+        writer.u64(original.epoch);
+        writer.u32(original.nextSequence);
+        writer.bytes(original.key, 32);
+        writer.u32(original.outCount);
+        writer.u32(count);
+        writer.u32(1);
+        for (size_t i = 0; i < original.outCount; ++i) {
+            writer.u32(original.out[i].sequence);
+            writer.packet(original.out[i].packet);
+        }
+        for (size_t i = 1; i <= count; ++i) {
+            auto p = incoming(DATA, 777, i, 2000 + i, "old inbox");
+            if (corruptFirst && i == 1)
+                p.to = PeerStatus::NODE_A;
+            writer.packet(p);
+        }
+        writer.u32(PeerStatus::NODE_A);
+        writer.u64(777);
+        writer.u32(count);
+        assert(writer.ok);
+        snapshotHeader(bytes.data(), gen, bytes.data() + SNAPSHOT_HEADER, writer.used);
+        return std::vector<uint8_t>(bytes.begin(), bytes.begin() + SNAPSHOT_HEADER + writer.used);
+    };
+    const auto valid = legacy(90, 20);
+    fakeFS.files[paths[0]] = valid;
+    fakeFS.files[paths[1]] = legacy(91, 20, true); // Even discarded records must pass validation.
+    restart(true);
+    assert(state.epoch == original.epoch && state.nextSequence == original.nextSequence);
+    assert(!memcmp(state.key, original.key, 32));
+    assert(state.outCount == CAP && state.seenCount == 1 && state.seen[0].sequence == 20);
+    for (size_t i = 0; i < CAP; ++i) {
+        assert(state.out[i].sequence == original.out[i].sequence);
+        assert(!memcmp(&state.out[i].packet, &original.out[i].packet, sizeof(meshtastic_MeshPacket)));
+    }
+    assert(state.inboxCount == 1 && delivered.size() == 1 && delivered.back().id == 2020);
+    assert(transmissions.empty());
+    for (int slot = 0; slot < 2; ++slot) {
+        bool trimmed = false;
+        const auto size = readSlot(slot);
+        assert(size && decodeState(size, trimmed) && !trimmed);
+    }
+    receive(incoming(DATA, 777, 1, 2001));
+    assert(delivered.size() == 1); // Dedupe watermark survives compaction.
+    completeRadio();
+    receive(incoming(RECEIPT, original.epoch, original.out[0].sequence, original.out[0].packet.id));
+    assert(state.outCount == CAP - 1 && confirmed.back() == original.out[0].packet.id);
+
+    // A successful first write followed by a power cut must still retire the legacy fallback.
+    fakeFS.files[paths[0]] = valid;
+    restart(true);
+    bool trimmed = false;
+    assert(decodeState(readSlot(0), trimmed) && !trimmed);
+    assert(decodeState(readSlot(1), trimmed) && !trimmed);
+    assert(state.outCount == CAP - 1);
+
+    fakeFS.files[paths[0]] = valid;
+    fakeFS.files[paths[1]] = valid;
+    fakeFS.failWrite = true;
+    assert(!restore());
+    assert(fakeFS.files[paths[0]] == valid || fakeFS.files[paths[1]] == valid);
+    restart(true);
+    assert(state.outCount == CAP && state.inboxCount == 1);
 }
 
 int main()
@@ -476,6 +551,7 @@ int main()
     testVerifiedContactRepair();
     testQuickHeartQueue();
     testPhoneReconnectReplay();
+    testLegacyInboxMigration();
     puts("actual DeliveryQueueModule: FIFO, event retry, receipt, durable dedupe/reboot/delete, storage failure, verified "
          "repair: OK");
 }

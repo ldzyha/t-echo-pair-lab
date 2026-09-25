@@ -21,7 +21,7 @@ namespace DeliveryQueue
 using namespace DeliveryQueueCodec;
 namespace
 {
-constexpr size_t CAP = 8, INBOX_CAP = 20, SEEN_CAP = 32, STORAGE_CAP = 16384, JOB_CAP = 12;
+constexpr size_t CAP = 8, INBOX_CAP = 1, LEGACY_INBOX_CAP = 20, SEEN_CAP = 32, STORAGE_CAP = 16384, JOB_CAP = 12;
 const char *paths[2] = {"/delivery-a.dat", "/delivery-b.dat"};
 struct Outgoing {
     uint32_t sequence = 0;
@@ -186,7 +186,7 @@ size_t encodeState()
     snapshotHeader(storage.data(), next, storage.data() + SNAPSHOT_HEADER, w.used);
     return w.used + SNAPSHOT_HEADER;
 }
-bool decodeState(size_t n)
+bool decodeState(size_t n, bool &trimmedInbox)
 {
     Reader r{storage.data() + SNAPSHOT_HEADER, n - SNAPSHOT_HEADER};
     backupState = State{};
@@ -195,12 +195,12 @@ bool decodeState(size_t n)
     backupState.nextSequence = r.u32();
     r.bytes(backupState.key, sizeof(backupState.key));
     const uint32_t out = r.u32(), inbox = r.u32(), seen = r.u32();
-    if (!r.ok || out > CAP || inbox > INBOX_CAP || seen > SEEN_CAP || !backupState.epoch || !backupState.nextSequence ||
+    if (!r.ok || out > CAP || inbox > LEGACY_INBOX_CAP || seen > SEEN_CAP || !backupState.epoch || !backupState.nextSequence ||
         backupState.self != nodeDB->getNodeNum() || owner.public_key.size != 32 ||
         memcmp(backupState.key, owner.public_key.bytes, 32))
         return false;
     backupState.outCount = out;
-    backupState.inboxCount = inbox;
+    backupState.inboxCount = inbox ? 1 : 0;
     backupState.seenCount = seen;
     uint32_t previous = 0;
     for (size_t i = 0; i < out; ++i) {
@@ -213,9 +213,10 @@ bool decodeState(size_t n)
         previous = o.sequence;
     }
     for (size_t i = 0; i < inbox; ++i) {
-        r.packet(backupState.inbox[i]);
+        // Validate every legacy record while retaining only the newest text.
+        r.packet(backupState.inbox[0]);
         Frame f;
-        const auto &p = backupState.inbox[i];
+        const auto &p = backupState.inbox[0];
         if (!r.ok || !framePacket(p) || !decode(p.decoded.payload.bytes, p.decoded.payload.size, f) || f.kind != DATA)
             return false;
     }
@@ -227,7 +228,9 @@ bool decodeState(size_t n)
         if (!r.ok || s.sender != peerId() || !s.epoch || !s.sequence)
             return false;
     }
-    return r.ok && r.used == r.cap;
+    const bool valid = r.ok && r.used == r.cap;
+    trimmedInbox = valid && inbox > INBOX_CAP;
+    return valid;
 }
 size_t readSlot(int slot)
 {
@@ -273,12 +276,14 @@ bool restore()
     concurrency::LockGuard lock(&inboxLock);
     uint32_t gens[2] = {};
     bool exists[2] = {};
+    bool trimmed[2] = {};
     for (int i = 0; i < 2; ++i) {
         {
             concurrency::LockGuard lock(spiLock);
             exists[i] = FSCom.exists(paths[i]);
         }
-        if (readSlot(i))
+        const size_t n = readSlot(i);
+        if (n && decodeState(n, trimmed[i]))
             gens[i] = get32(storage.data() + 8);
     }
     int first = newer(gens[1], gens[0]) ? 1 : 0;
@@ -287,10 +292,13 @@ bool restore()
         if (!gens[slot])
             continue;
         size_t n = readSlot(slot);
-        if (n && decodeState(n)) {
+        bool ignored = false;
+        if (n && decodeState(n, ignored)) {
             state = backupState;
             generation = gens[slot];
             activeSlot = slot;
+            if (trimmed[0] || trimmed[1])
+                return persist() && persist(); // Replace both legacy slots; preserve pending delivery and deduplication.
             return true;
         }
     }
@@ -489,26 +497,16 @@ void processReceived(const meshtastic_MeshPacket &p)
         ++state.seenCount;
     }
     state.seen[seenIndex] = Seen{p.from, f.epoch, f.sequence};
-    bool evicted = state.inboxCount == INBOX_CAP;
-    if (evicted) {
-        for (size_t i = 1; i < INBOX_CAP; ++i)
-            state.inbox[i - 1] = state.inbox[i];
-        --state.inboxCount;
-    }
-    state.inbox[state.inboxCount++] = p;
+    state.inbox[0] = p;
+    state.inboxCount = 1;
     if (!persist()) {
         state = backupState;
         label = "Storage error";
         return;
     }
-    if (evicted)
-        for (size_t i = 1; i < INBOX_CAP; ++i) {
-            presented[i - 1] = presented[i];
-            liveInbox[i - 1] = liveInbox[i];
-        }
     LOG_INFO("Delivery durably received orig=%08x retained=%u", f.originalId, unsigned(state.inboxCount));
-    presented[state.inboxCount - 1] = false;
-    liveInbox[state.inboxCount - 1] = true;
+    presented[0] = false;
+    liveInbox[0] = true;
     receipt(p, f);
 }
 void processCancel(uint32_t id)
@@ -751,15 +749,12 @@ bool nextForPhone(PhoneReplay &cursor, meshtastic_MeshPacket &packet)
     concurrency::LockGuard lock(&inboxLock);
     if (cursor.complete || !ready || !healthy)
         return false;
-    for (size_t i = 0; i < state.inboxCount && cursor.count < INBOX_CAP; ++i) {
+    for (size_t i = 0; i < state.inboxCount; ++i) {
         const auto &stored = state.inbox[i];
         Frame frame;
         if (!decode(stored.decoded.payload.bytes, stored.decoded.payload.size, frame))
             continue;
-        bool seen = false;
-        for (size_t j = 0; j < cursor.count; ++j)
-            seen |= cursor.ids[j] == frame.originalId;
-        if (seen)
+        if (cursor.lastId == frame.originalId)
             continue;
         packet = stored;
         packet.decoded = meshtastic_Data_init_default;
@@ -768,7 +763,8 @@ bool nextForPhone(PhoneReplay &cursor, meshtastic_MeshPacket &packet)
         packet.id = frame.originalId;
         packet.want_ack = false;
         packet.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL;
-        cursor.ids[cursor.count++] = frame.originalId;
+        cursor.lastId = frame.originalId;
+        cursor.complete = true;
         return true;
     }
     cursor.complete = true;
@@ -780,11 +776,7 @@ void rememberForPhone(PhoneReplay &cursor, const meshtastic_MeshPacket &packet)
         packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
         packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP)
         return;
-    for (size_t i = 0; i < cursor.count; ++i)
-        if (cursor.ids[i] == packet.id)
-            return;
-    if (cursor.count < INBOX_CAP)
-        cursor.ids[cursor.count++] = packet.id;
+    cursor.lastId = packet.id;
 }
 void logStatus()
 {

@@ -398,36 +398,40 @@ void MessageStore::loadFromFlash()
     resetMessagePool(); // reset pool when loading
 
 #ifdef FSCom
-    concurrency::LockGuard guard(spiLock);
+    bool compact = false;
+    {
+        concurrency::LockGuard guard(spiLock);
 
-    std::string source = filename;
-    bool legacy = false;
+        std::string source = filename;
+        bool legacy = false;
 #if defined(TTGO_T_ECHO_PLUS)
-    if (!FSCom.exists(source.c_str())) {
-        source.pop_back(); // Import the original .msgs format once; new saves use .msgs2.
-        legacy = true;
-    }
+        if (!FSCom.exists(source.c_str())) {
+            source.pop_back(); // Import the original .msgs format once; new saves use .msgs2.
+            legacy = true;
+        }
 #endif
-    if (!FSCom.exists(source.c_str()))
-        return;
+        if (!FSCom.exists(source.c_str()))
+            return;
 
-    auto f = FSCom.open(source.c_str(), FILE_O_READ);
-    if (!f)
-        return;
+        auto f = FSCom.open(source.c_str(), FILE_O_READ);
+        if (!f)
+            return;
 
-    uint8_t count = 0;
-    f.readBytes(reinterpret_cast<char *>(&count), 1);
-    if (count > MAX_MESSAGES_SAVED)
-        count = MAX_MESSAGES_SAVED;
+        uint8_t count = 0;
+        f.readBytes(reinterpret_cast<char *>(&count), 1);
+        compact = count > MAX_MESSAGES_SAVED;
 
-    for (uint8_t i = 0; i < count; ++i) {
-        StoredMessage m;
-        if (!readMessageRecord(f, m, legacy))
-            break;
-        liveMessages.push_back(m);
+        for (uint8_t i = 0; i < count; ++i) {
+            StoredMessage m;
+            if (!readMessageRecord(f, m, legacy))
+                break;
+            addLiveMessage(m);
+        }
+
+        f.close();
     }
-
-    f.close();
+    if (compact)
+        saveToFlash();
 #endif
     // Loading messages does not trigger an autosave
     g_messageStoreHasUnsavedChanges = false;

@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,15 @@ def main():
             f"{lib}/Nanopb/pb_encode.c",
             f"{lib}/Nanopb/pb_common.c",
             "-Wl,--gc-sections",
+        ]
+        # Compile the unchanged production source beside stubs for platform-local includes.
+        shutil.copyfile(ROOT / "src/MessageStore.cpp", output / "MessageStore.cpp")
+        suites["message_store"] = [
+            "-Itest/custom_audit/test_message_store_stubs",
+            "-Isrc/mesh/generated",
+            f"-I{lib}/Nanopb",
+            "test/custom_audit/test_message_store.cpp",
+            str(output / "MessageStore.cpp"),
         ]
         suites["delivery_payload"] = [
             "test/custom_audit/test_delivery_payload.cpp"

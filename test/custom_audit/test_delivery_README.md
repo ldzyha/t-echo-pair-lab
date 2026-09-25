@@ -18,7 +18,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -Isrc -
 /tmp/test-delivery-payload
 ```
 
-Uses actual generated protobuf and Nanopb. Current maximum is192 UTF-8 bytes for simple text and187 with maximal reply_id; additional metadata can lower it. No truncation.
+Uses actual generated protobuf and Nanopb. Current maximum is 192 UTF-8 bytes for simple text and 187 with maximal reply_id; additional metadata can lower it. No truncation.
 
 ## Actual module state machine
 
@@ -38,6 +38,9 @@ Directly includes production DeliveryQueueModule.cpp, without a duplicate implem
 - Sender restart restores pending state but waits for fresh peer RX.
 - Receiver restart replays stable original IDs as INTERNAL, without radio sends.
 - Inbox deletion survives restart while retaining duplicate suppression.
+- Legacy 20-record inbox migration retains only the newest message and preserves all 8 pending outgoing records, keys, epoch, sequence numbers and deduplication.
+- Invalid legacy records, interrupted compaction and write failures preserve a valid recovery source.
+- Independent API connections replay only the latest inbox record.
 - Failed outgoing persistence produces explicit error and no transmission; failed incoming persistence emits no receipt or delivery.
 - RX callback never writes flash; client/radio callbacks run outside SPI lock.
 

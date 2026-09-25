@@ -5,8 +5,7 @@
 namespace DeliveryQueue
 {
 struct PhoneReplay {
-    uint32_t ids[20] = {};
-    size_t count = 0;
+    uint32_t lastId = 0;
     bool complete = false;
 };
 bool nextForPhone(PhoneReplay &cursor, meshtastic_MeshPacket &packet);
