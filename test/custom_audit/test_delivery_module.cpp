@@ -356,6 +356,47 @@ void testQuickHeartQueue()
     assert(DeliveryQueue::pendingCount() == 0 && confirmed.size() == 1 && confirmed[0] == 990);
 }
 
+void testPhoneReconnectReplay()
+{
+    using namespace DeliveryQueue;
+    restart(false);
+    for (uint32_t n = 1; n <= 22; ++n)
+        receive(incoming(DATA, 500, n, 1000 + n, "saved while phone absent"));
+    const auto disk = fakeFS.files;
+    const auto radioCount = transmissions.size();
+    const auto uiCount = delivered.size();
+    PhoneReplay phone, secondPhone;
+    meshtastic_MeshPacket replay = meshtastic_MeshPacket_init_default;
+    PhoneReplay bootPhone;
+    rememberForPhone(bootPhone, delivered.back());
+    rememberForPhone(bootPhone, delivered.back());
+    assert(bootPhone.count == 1); // boot/live queue already supplied the newest message
+    size_t backfilled = 0;
+    while (nextForPhone(bootPhone, replay)) {
+        assert(replay.id != 1022);
+        ++backfilled;
+    }
+    assert(backfilled == 19);
+    for (uint32_t n = 3; n <= 22; ++n) {
+        assert(nextForPhone(phone, replay));
+        assert(replay.id == 1000 + n && replay.from == PeerStatus::NODE_A && replay.to == PeerStatus::NODE_B);
+        assert(replay.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP);
+        assert(replay.pki_encrypted && !replay.want_ack);
+        assert(replay.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL);
+    }
+    assert(!nextForPhone(phone, replay) && phone.complete);
+    assert(nextForPhone(secondPhone, replay) && replay.id == 1003); // independent client/session
+    phone = {};
+    assert(nextForPhone(phone, replay) && replay.id == 1003); // reconnect retains original ID
+    assert(fakeFS.files == disk && transmissions.size() == radioCount && delivered.size() == uiCount);
+    forgetInbox(1004);
+    harness.runOnce();
+    assert(nextForPhone(phone, replay) && replay.id == 1005); // deleted messages stay deleted
+    restart(true);
+    phone = {};
+    assert(nextForPhone(phone, replay) && replay.id == 1003 && transmissions.empty());
+}
+
 int main()
 {
     restart(false);
@@ -434,6 +475,7 @@ int main()
     assert(DeliveryQueue::pendingCount() == 0 && transmissions.empty() && !queueStatus.empty() && queueStatus.back().second != 0);
     testVerifiedContactRepair();
     testQuickHeartQueue();
+    testPhoneReconnectReplay();
     puts("actual DeliveryQueueModule: FIFO, event retry, receipt, durable dedupe/reboot/delete, storage failure, verified "
          "repair: OK");
 }

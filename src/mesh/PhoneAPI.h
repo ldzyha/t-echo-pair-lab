@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Observer.h"
+#if defined(TTGO_T_ECHO_PLUS)
+#include "DeliveryQueue.h"
+#endif
 #include "concurrency/Lock.h"
 #include "mesh-pb-constants.h"
 #include "meshtastic/portnums.pb.h"
@@ -35,6 +38,9 @@
 class PhoneAPI
     : public Observer<uint32_t> // FIXME, we shouldn't be inheriting from Observer, instead use CallbackObserver as a member
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    DeliveryQueue::PhoneReplay deliveryReplay;
+#endif
     enum State {
         STATE_SEND_NOTHING, // Initial state, don't send anything until the client starts asking for config
         STATE_SEND_UIDATA,  // send stored data for device-ui

@@ -621,6 +621,11 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
 void PhoneAPI::sendConfigComplete()
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    deliveryReplay = {};
+    deliveryReplay.complete = config_nonce == SPECIAL_NONCE_ONLY_NODES || config_nonce == SPECIAL_NONCE_ONLY_CONFIG;
+    DeliveryQueue::logStatus();
+#endif
     LOG_INFO("Config Send Complete millis=%u", millis());
     fromRadioScratch.which_payload_variant = meshtastic_FromRadio_config_complete_id_tag;
     fromRadioScratch.config_complete_id = config_nonce;
@@ -771,6 +776,19 @@ bool PhoneAPI::available()
 
         if (!packetForPhone)
             packetForPhone = service->getForPhone();
+#if defined(TTGO_T_ECHO_PLUS)
+        if (packetForPhone)
+            DeliveryQueue::rememberForPhone(deliveryReplay, *packetForPhone);
+        if (!packetForPhone && !deliveryReplay.complete) {
+            auto *replayed = packetPool.allocZeroed();
+            if (replayed) {
+                if (DeliveryQueue::nextForPhone(deliveryReplay, *replayed))
+                    packetForPhone = replayed;
+                else
+                    service->releaseToPool(replayed);
+            }
+        }
+#endif
         hasPacket = !!packetForPhone;
         return hasPacket;
     }

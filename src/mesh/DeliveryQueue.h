@@ -4,6 +4,14 @@
 #include <cstddef>
 namespace DeliveryQueue
 {
+struct PhoneReplay {
+    uint32_t ids[20] = {};
+    size_t count = 0;
+    bool complete = false;
+};
+bool nextForPhone(PhoneReplay &cursor, meshtastic_MeshPacket &packet);
+void rememberForPhone(PhoneReplay &cursor, const meshtastic_MeshPacket &packet);
+void logStatus();
 void setup();
 bool submit(const meshtastic_MeshPacket &packet);
 bool verifiedContactImported(const meshtastic_MeshPacket &source, const meshtastic_SharedContact &contact);

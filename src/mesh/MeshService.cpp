@@ -430,7 +430,10 @@ meshtastic_NodeInfoLite *MeshService::refreshLocalMeshNode()
     node->last_heard =
         getValidTime(RTCQualityFromNet); // This nodedb timestamp might be stale, so update it if our clock is kinda valid
 
-    position.time = getValidTime(RTCQualityFromNet);
+#if defined(TTGO_T_ECHO_PLUS)
+    if (config.position.fixed_position)
+#endif
+        position.time = getValidTime(RTCQualityFromNet);
 
     if (powerStatus->getHasBattery() == 1) {
         updateBatteryLevel(powerStatus->getBatteryChargePercent());
@@ -442,6 +445,12 @@ meshtastic_NodeInfoLite *MeshService::refreshLocalMeshNode()
 #if HAS_GPS
 int MeshService::onGPSChanged(const meshtastic::GPSStatus *newStatus)
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!newStatus->getHasLock() && !config.position.fixed_position) {
+        nodeDB->invalidateLocalPosition();
+        return 0; // Preserve the last known coordinate and its original time in NodeDB.
+    }
+#endif
     // Update our local node info with our position (even if we don't decide to update anyone else)
     const meshtastic_NodeInfoLite *node = refreshLocalMeshNode();
     meshtastic_Position pos = meshtastic_Position_init_default;
@@ -463,6 +472,10 @@ int MeshService::onGPSChanged(const meshtastic::GPSStatus *newStatus)
 
     // Add a fresh timestamp
     pos.time = getValidTime(RTCQualityFromNet);
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!config.position.fixed_position)
+        pos.time = pos.timestamp;
+#endif
 
     // In debug logs, identify position by @timestamp:stage (stage 4 = nodeDB)
     LOG_DEBUG("onGPSChanged() pos@%x time=%u lat=%d lon=%d alt=%d", pos.timestamp, pos.time, pos.latitude_i, pos.longitude_i,

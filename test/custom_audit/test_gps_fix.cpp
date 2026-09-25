@@ -5,6 +5,16 @@
 
 int main()
 {
+    using GPSFixValidity::canTransmitPosition;
+    using GPSFixValidity::reportTime;
+    assert(!canTransmitPosition(false, false, true, false)); // boot with a saved coordinate
+    assert(!canTransmitPosition(false, true, true, false));  // GPS lost after a good fix
+    assert(canTransmitPosition(false, true, true, true));
+    assert(canTransmitPosition(false, true, false, false)); // phone-sourced position
+    assert(canTransmitPosition(true, false, true, false));  // explicit fixed location
+    assert(reportTime(false, 2000, 1000) == 1000);          // sending is not a new fix
+    assert(reportTime(false, 2000, 0) == 0);
+    assert(reportTime(true, 2000, 1000) == 2000);
     using GPSFixValidity::calendar;
     using GPSFixValidity::expiredAlwaysOn;
 

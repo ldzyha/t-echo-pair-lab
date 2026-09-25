@@ -290,6 +290,13 @@ class NodeDB
 
     bool hasValidPosition(const meshtastic_NodeInfoLite *n);
     bool hasLocalPositionSinceBoot() const { return localPositionUpdatedSinceBoot; }
+#if defined(TTGO_T_ECHO_PLUS)
+    void invalidateLocalPosition()
+    {
+        localPosition = meshtastic_Position_init_default;
+        localPositionUpdatedSinceBoot = false;
+    }
+#endif
 
 #if !defined(MESHTASTIC_EXCLUDE_PKI)
     bool checkLowEntropyPublicKey(const meshtastic_Config_SecurityConfig_public_key_t &keyToTest);

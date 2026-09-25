@@ -35,7 +35,8 @@ module_config:
     environmentMeasurementEnabled: true
     environmentScreenEnabled: true
     environmentUpdateInterval: 60
-    deviceUpdateInterval: 3600
+    deviceTelemetryEnabled: true
+    deviceUpdateInterval: 60
   externalNotification:
     enabled: true
     alertMessage: false

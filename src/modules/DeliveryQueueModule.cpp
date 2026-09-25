@@ -53,6 +53,7 @@ const char *label = "Starting";
 class Module;
 Module *instance = nullptr;
 concurrency::Lock jobLock;
+concurrency::Lock inboxLock;
 enum class JobKind : uint8_t { SUBMIT, RECEIVE, CANCEL, REBIND };
 struct Job {
     JobKind kind = JobKind::CANCEL;
@@ -269,6 +270,7 @@ bool persist()
 }
 bool restore()
 {
+    concurrency::LockGuard lock(&inboxLock);
     uint32_t gens[2] = {};
     bool exists[2] = {};
     for (int i = 0; i < 2; ++i) {
@@ -436,6 +438,7 @@ void processSubmit(const meshtastic_MeshPacket &p)
 }
 void processReceived(const meshtastic_MeshPacket &p)
 {
+    concurrency::LockGuard lock(&inboxLock);
     Frame f;
     if (!healthy || !framePacket(p) || !decode(p.decoded.payload.bytes, p.decoded.payload.size, f))
         return;
@@ -582,6 +585,7 @@ void processRebind(const meshtastic_MeshPacket &p)
 }
 void processForget()
 {
+    concurrency::LockGuard inboxGuard(&inboxLock);
     uint32_t ids[INBOX_CAP] = {};
     size_t count;
     bool all;
@@ -741,6 +745,51 @@ class Module : public SinglePortModule, private concurrency::OSThread
 void setup()
 {
     instance = new Module();
+}
+bool nextForPhone(PhoneReplay &cursor, meshtastic_MeshPacket &packet)
+{
+    concurrency::LockGuard lock(&inboxLock);
+    if (cursor.complete || !ready || !healthy)
+        return false;
+    for (size_t i = 0; i < state.inboxCount && cursor.count < INBOX_CAP; ++i) {
+        const auto &stored = state.inbox[i];
+        Frame frame;
+        if (!decode(stored.decoded.payload.bytes, stored.decoded.payload.size, frame))
+            continue;
+        bool seen = false;
+        for (size_t j = 0; j < cursor.count; ++j)
+            seen |= cursor.ids[j] == frame.originalId;
+        if (seen)
+            continue;
+        packet = stored;
+        packet.decoded = meshtastic_Data_init_default;
+        if (!pb_decode_from_bytes(frame.body, frame.size, meshtastic_Data_fields, &packet.decoded))
+            continue;
+        packet.id = frame.originalId;
+        packet.want_ack = false;
+        packet.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_INTERNAL;
+        cursor.ids[cursor.count++] = frame.originalId;
+        return true;
+    }
+    cursor.complete = true;
+    return false;
+}
+void rememberForPhone(PhoneReplay &cursor, const meshtastic_MeshPacket &packet)
+{
+    if (!packet.id || packet.from != peerId() || packet.to != nodeDB->getNodeNum() ||
+        packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+        packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP)
+        return;
+    for (size_t i = 0; i < cursor.count; ++i)
+        if (cursor.ids[i] == packet.id)
+            return;
+    if (cursor.count < INBOX_CAP)
+        cursor.ids[cursor.count++] = packet.id;
+}
+void logStatus()
+{
+    LOG_INFO("Delivery state ready=%u healthy=%u pending=%u retained=%u status=%s", unsigned(ready), unsigned(healthy),
+             unsigned(pendingCount()), unsigned(state.inboxCount), label);
 }
 bool submit(const meshtastic_MeshPacket &p)
 {

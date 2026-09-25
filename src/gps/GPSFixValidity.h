@@ -3,6 +3,16 @@
 
 namespace GPSFixValidity
 {
+inline bool canTransmitPosition(bool fixed, bool acquiredSinceBoot, bool gpsSource, bool gpsLocked)
+{
+    return fixed || (acquiredSinceBoot && (!gpsSource || gpsLocked));
+}
+
+inline uint32_t reportTime(bool fixed, uint32_t now, uint32_t fixTime)
+{
+    return fixed ? now : fixTime;
+}
+
 // Validate before gm_mktime indexes its month table. This is a calendar check,
 // not a guess at the user's current date or location.
 inline bool calendar(unsigned year, unsigned month, unsigned day, unsigned hour, unsigned minute, unsigned second)

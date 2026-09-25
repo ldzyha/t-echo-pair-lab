@@ -11,6 +11,7 @@
 #include "TypeConversions.h"
 #include "airtime.h"
 #include "configuration.h"
+#include "gps/GPSFixValidity.h"
 #include "gps/GeoCoord.h"
 #include "main.h"
 #include "mesh/compression/unishox2.h"
@@ -170,6 +171,14 @@ bool PositionModule::hasGPS()
 // Allocate a packet with our position data if we have one
 meshtastic_MeshPacket *PositionModule::allocPositionPacket()
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    if (!GPSFixValidity::canTransmitPosition(config.position.fixed_position, nodeDB->hasLocalPositionSinceBoot(),
+                                             localPosition.location_source == meshtastic_Position_LocSource_LOC_INTERNAL,
+                                             gps && gps->hasLock())) {
+        LOG_DEBUG("Skip position: no current fix; keep last known point with original time");
+        return nullptr;
+    }
+#endif
     if (precision == 0) {
         LOG_DEBUG("Skip location send because precision is set to 0!");
         return nullptr;
@@ -213,6 +222,9 @@ meshtastic_MeshPacket *PositionModule::allocPositionPacket()
         p.time = 0;
     }
 
+#if defined(TTGO_T_ECHO_PLUS)
+    p.time = GPSFixValidity::reportTime(config.position.fixed_position, p.time, localPosition.time);
+#endif
     if (config.position.fixed_position) {
         p.location_source = meshtastic_Position_LocSource_LOC_MANUAL;
     } else {
