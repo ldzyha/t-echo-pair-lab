@@ -6,6 +6,7 @@
 #include "modules/ExternalNotificationModule.h"
 #if defined(TTGO_T_ECHO_PLUS)
 #include "input/QuickHeart.h"
+#include "input/TouchBacklight.h"
 #endif
 
 #if ARCH_PORTDUINO
@@ -36,7 +37,7 @@
 #if HAS_BUTTON || defined(ARCH_PORTDUINO)
 #include "input/ButtonThread.h"
 
-#if defined(BUTTON_PIN_TOUCH)
+#if defined(BUTTON_PIN_TOUCH) && !defined(TTGO_T_ECHO_PLUS)
 ButtonThread *TouchButtonThread = nullptr;
 #if defined(PIN_EINK_EN)
 static bool touchBacklightWasOn = false;
@@ -218,17 +219,15 @@ void InputBroker::Init()
 #endif
 
 #ifdef BUTTON_PIN_TOUCH
+#if defined(TTGO_T_ECHO_PLUS)
+    new TouchBacklight();
+#else
     TouchButtonThread = new ButtonThread("BackButton");
     ButtonConfig touchConfig;
     touchConfig.pinNumber = BUTTON_PIN_TOUCH;
     touchConfig.activeLow = true;
     touchConfig.activePullup = true;
     touchConfig.pullupSense = pullup_sense;
-#if defined(TTGO_T_ECHO_PLUS)
-    touchConfig.activeLow = BUTTON_TOUCH_ACTIVE_LOW;
-    touchConfig.activePullup = BUTTON_TOUCH_ACTIVE_PULLUP;
-    touchConfig.pullupSense = INPUT_PULLDOWN_SENSE;
-#endif
     touchConfig.intRoutine = []() {
         TouchButtonThread->userButton.tick();
         TouchButtonThread->setIntervalFromNow(0);
@@ -267,6 +266,7 @@ void InputBroker::Init()
     touchConfig.onRelease = []() { hapticFeedback->cancelDelayedPulse(); };
 #endif
     TouchButtonThread->initButton(touchConfig);
+#endif
 #endif
 
 #if defined(CANCEL_BUTTON_PIN)

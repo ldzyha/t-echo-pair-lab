@@ -49,6 +49,13 @@ def main():
         "test/custom_audit/test_environment.cpp",
         "src/mesh/Throttle.cpp",
     ]
+    suites["touch_backlight"] = [
+        "-Itest/custom_audit/test_touch_stubs",
+        "-Isrc/mesh",
+        "test/custom_audit/test_touch_backlight.cpp",
+        "src/input/TouchBacklight.cpp",
+        "src/mesh/Throttle.cpp",
+    ]
     suites["rtc_policy"] = [
         "-DPIO_UNIT_TESTING",
         "-Itest/custom_audit/test_time_stubs",
