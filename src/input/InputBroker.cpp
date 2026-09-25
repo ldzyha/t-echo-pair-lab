@@ -116,7 +116,7 @@ int InputBroker::handleInputEvent(const InputEvent *event)
     if (event && event->inputEvent == INPUT_BROKER_SEND_HEART) {
         if (externalNotificationModule && moduleConfig.external_notification.enabled && externalNotificationModule->nagging())
             externalNotificationModule->stopNow();
-        QuickHeart::send();
+        QuickHeart::send(event->kbchar ? event->kbchar : 2);
         return 0;
     }
 #endif
@@ -224,6 +224,11 @@ void InputBroker::Init()
     touchConfig.activeLow = true;
     touchConfig.activePullup = true;
     touchConfig.pullupSense = pullup_sense;
+#if defined(TTGO_T_ECHO_PLUS)
+    touchConfig.activeLow = BUTTON_TOUCH_ACTIVE_LOW;
+    touchConfig.activePullup = BUTTON_TOUCH_ACTIVE_PULLUP;
+    touchConfig.pullupSense = INPUT_PULLDOWN_SENSE;
+#endif
     touchConfig.intRoutine = []() {
         TouchButtonThread->userButton.tick();
         TouchButtonThread->setIntervalFromNow(0);
@@ -342,6 +347,7 @@ void InputBroker::Init()
         userConfig.longLongPress = INPUT_BROKER_SHUTDOWN;
 #if defined(TTGO_T_ECHO_PLUS)
         userConfig.doublePress = INPUT_BROKER_SEND_HEART;
+        userConfig.triplePress = INPUT_BROKER_SEND_HEART;
         userConfig.clickWindowMs = QuickHeart::CLICK_WINDOW_MS;
         userConfig.debounceMs = QuickHeart::DEBOUNCE_MS;
 #endif

@@ -114,6 +114,7 @@ bool BME280Sensor::getMetrics(meshtastic_Telemetry *measurement)
             LOG_INFO("BME280 %s: rawT=%.2f rawRH=%.2f die=%.2f heat=%.2f T=%.2f RH=%.2f P=%.2f USB=%u known=%u",
                      thermalProfile ? thermalProfile->name : "TH4-RAW", raw.temperature, raw.relativeHumidity, dieC, heatC,
                      metrics.temperature, metrics.relative_humidity, raw.pressureHpa, hasUsb, powerKnown);
+            LOG_INFO("BME280 board state: frontlight=%u", digitalRead(PIN_EINK_EN));
             if (thermalProfile)
                 LOG_INFO("BME280 curve: dieLP=%.3f range=%d RH_gain=%.6f T_offset=%.2f RH_offset=%.2f",
                          thermalModel.getFilteredDieC(), thermalModel.getRange(), calibration.humidityGain,

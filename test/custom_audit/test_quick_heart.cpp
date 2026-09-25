@@ -4,6 +4,7 @@
 #include <cassert>
 #include <climits>
 #include <cstdio>
+#include <string>
 
 static unsigned long clockMs = 0;
 unsigned long millis()
@@ -11,17 +12,24 @@ unsigned long millis()
     return clockMs;
 }
 static unsigned singles = 0, doubles = 0, holds = 0;
+static unsigned multis = 0, lastClicks = 0;
+static OneButton *activeButton = nullptr;
 
 static OneButton buttonAt(unsigned long start)
 {
     clockMs = start;
     singles = doubles = holds = 0;
+    multis = lastClicks = 0;
     OneButton button;
     button.setDebounceMs(QuickHeart::DEBOUNCE_MS);
     button.setClickMs(QuickHeart::CLICK_WINDOW_MS);
     button.setPressMs(500);
     button.attachClick([]() { ++singles; });
     button.attachDoubleClick([]() { ++doubles; });
+    button.attachMultiClick([]() {
+        ++multis;
+        lastClicks = activeButton->getNumberClicks();
+    });
     button.attachLongPressStart([]() { ++holds; });
     button.tick(false);
     return button;
@@ -29,6 +37,7 @@ static OneButton buttonAt(unsigned long start)
 
 static void advance(OneButton &button, bool down, unsigned duration)
 {
+    activeButton = &button;
     for (unsigned i = 0; i < duration; i += 5) {
         clockMs += 5;
         button.tick(down);
@@ -58,6 +67,30 @@ int main()
     assert(!memcmp(packet.decoded.payload.bytes, heart, sizeof(heart)));
     assert(!packet.decoded.reply_id && !packet.decoded.want_response);
     const auto valid = packet;
+    size_t previousWidth = 0;
+    for (unsigned clicks = 2; clicks <= 5; ++clicks) {
+        assert(QuickHeart::prepare(packet, a, b, key.data(), key.size(), clicks));
+        const std::string body(reinterpret_cast<const char *>(packet.decoded.payload.bytes), packet.decoded.payload.size);
+        assert(body == QuickHeart::textFor(clicks));
+        assert(packet.decoded.payload.size <= 192);
+        assert(static_cast<unsigned>(std::count(body.begin(), body.end(), '\n')) == 2 * (clicks - 2));
+        size_t width = 0, widest = 0;
+        for (unsigned char c : body) {
+            if (c == '\n') {
+                widest = std::max(widest, width);
+                width = 0;
+            } else if ((c & 0xc0) != 0x80) {
+                ++width;
+            }
+        }
+        widest = std::max(widest, width);
+        assert(widest > previousWidth);
+        previousWidth = widest;
+    }
+    assert(QuickHeart::textFor(6) == QuickHeart::textFor(5));
+    assert(QuickHeart::textFor(255) == QuickHeart::textFor(5));
+    assert(!QuickHeart::textFor(1));
+    packet = valid;
     assert(!QuickHeart::prepare(packet, a, UINT32_MAX, key.data(), key.size()));
     assert(!memcmp(&packet, &valid, sizeof(packet)));
     assert(!QuickHeart::prepare(packet, a, a, key.data(), key.size()));
@@ -77,6 +110,18 @@ int main()
     advance(button, true, 120);
     advance(button, false, 550);
     assert(singles == 0 && doubles == 1 && holds == 0);
+
+    for (unsigned clicks = 3; clicks <= 6; ++clicks) {
+        button = buttonAt(10000 * clicks);
+        for (unsigned click = 0; click < clicks; ++click) {
+            advance(button, true, 120);
+            advance(button, false, 150);
+        }
+        advance(button, false, 550);
+        assert(singles == 0 && doubles == 0 && holds == 0);
+        assert(multis == 1 && lastClicks == clicks);
+        assert(QuickHeart::textFor(lastClicks));
+    }
 
     button = buttonAt(3000);
     advance(button, true, 1000);
@@ -109,5 +154,5 @@ int main()
     advance(button, true, 120);
     advance(button, false, 550);
     assert(singles == 0 && doubles == 1 && holds == 0);
-    puts("Quick heart: paired encrypted UTF-8 payload; actual OneButton single/double/hold/bounce/rollover passed");
+    puts("Quick heart: growing outlines, bounded UTF-8 payload; actual OneButton single/2-6 clicks/hold/bounce/rollover passed");
 }

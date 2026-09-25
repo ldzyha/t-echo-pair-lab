@@ -33,7 +33,7 @@ extern "C" {
 #define BUTTON_ACTIVE_PULLUP true
 #define PIN_BUTTON2 (0 + 18)      // reset-labelled but usable as GPIO
 #define PIN_BUTTON_TOUCH (0 + 11) // capacitive touch
-#define BUTTON_TOUCH_ACTIVE_LOW true
+#define BUTTON_TOUCH_ACTIVE_LOW false
 #define BUTTON_TOUCH_ACTIVE_PULLUP true
 
 #define BUTTON_CLICK_MS 400

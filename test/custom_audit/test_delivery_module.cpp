@@ -331,7 +331,7 @@ void testQuickHeartQueue()
     restart(false);
     auto packet = message(990, "unused");
     auto &peer = fakeNodes.nodes[PeerStatus::NODE_A];
-    assert(QuickHeart::prepare(packet, PeerStatus::NODE_B, PeerStatus::NODE_A, peer.user.public_key.bytes, 32));
+    assert(QuickHeart::prepare(packet, PeerStatus::NODE_B, PeerStatus::NODE_A, peer.user.public_key.bytes, 32, 5));
     assert(!packet.want_ack);
     assert(DeliveryQueue::submit(packet));
     harness.runOnce();
@@ -339,8 +339,8 @@ void testQuickHeartQueue()
     const auto frame = frameOf(transmissions.back());
     meshtastic_Data decoded = meshtastic_Data_init_default;
     assert(pb_decode_from_bytes(frame.body, frame.size, meshtastic_Data_fields, &decoded));
-    assert(decoded.payload.size == sizeof(QuickHeart::TEXT) - 1);
-    assert(!memcmp(decoded.payload.bytes, QuickHeart::TEXT, decoded.payload.size));
+    assert(decoded.payload.size == sizeof(QuickHeart::LARGE) - 1);
+    assert(!memcmp(decoded.payload.bytes, QuickHeart::LARGE, decoded.payload.size));
     completeRadio();
     restart(true);
     assert(DeliveryQueue::pendingCount() == 1 && transmissions.empty());

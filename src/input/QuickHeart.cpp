@@ -25,7 +25,7 @@ static void unavailable()
 #endif
 }
 
-void send()
+void send(unsigned clicks)
 {
     if (!nodeDB || !router || !service) {
         unavailable();
@@ -41,7 +41,7 @@ void send()
     auto *packet = router->allocForSending();
     if (!packet)
         return;
-    if (!prepare(*packet, self, target, peer->user.public_key.bytes, peer->user.public_key.size)) {
+    if (!prepare(*packet, self, target, peer->user.public_key.bytes, peer->user.public_key.size, clicks)) {
         packetPool.release(packet);
         unavailable();
         return;
@@ -50,7 +50,7 @@ void send()
     messageStore.addFromPacket(*packet);
 #endif
     service->sendToPhone(packetPool.allocCopy(*packet));
-    LOG_INFO("Quick heart requested id=%08x", packet->id);
+    LOG_INFO("Quick heart requested id=%08x clicks=%u", packet->id, clicks);
     service->sendToMesh(packet, RX_SRC_LOCAL, false);
 }
 } // namespace QuickHeart

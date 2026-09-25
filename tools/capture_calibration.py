@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture one fresh TH4/TH5 sensor log with a manual reference; no config changes."""
+"""Capture one fresh TH4/TH5/TH6 sensor log with a manual reference; no config changes."""
 
 import argparse
 from datetime import datetime, timezone
@@ -14,7 +14,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 NUMBER = r"(?:[-+]?\d+(?:\.\d+)?|nan)"
 SAMPLE = re.compile(
-    rf"BME280 (TH[45]-[\w-]+): rawT=({NUMBER}) rawRH=({NUMBER}) "
+    rf"BME280 (TH[456]-[\w-]+): rawT=({NUMBER}) rawRH=({NUMBER}) "
     rf"die=({NUMBER}) heat=({NUMBER}) T=({NUMBER}) RH=({NUMBER}) "
     rf"P=({NUMBER}) USB=(\d) known=(\d)",
     re.IGNORECASE,
@@ -24,6 +24,7 @@ CURVE = re.compile(
     rf"T_offset=({NUMBER}) RH_offset=({NUMBER})",
     re.IGNORECASE,
 )
+BOARD_STATE = re.compile(r"BME280 board state: frontlight=([01])")
 
 
 def parse_sample(line):
@@ -115,6 +116,9 @@ def main():
             if parsed["profile"].upper().endswith("-RAW"):
                 ready.set()
             return
+        board = BOARD_STATE.search(line)
+        if board and sample:
+            sample["frontlight_gpio"] = int(board.group(1))
         match = CURVE.search(line)
         if match and sample:
             values = list(map(float, match.groups()))
@@ -143,7 +147,7 @@ def main():
         identified.set()
         if not ready.wait(args.timeout):
             raise RuntimeError(
-                "No complete fresh TH4/TH5 log. Check firmware/log stream and port ownership."
+                "No complete fresh TH4/TH5/TH6 log. Check firmware/log stream and port ownership."
             )
         record["sample"] = sample
         record["status"] = "captured"

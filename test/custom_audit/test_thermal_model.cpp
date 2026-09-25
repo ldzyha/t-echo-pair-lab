@@ -119,13 +119,13 @@ static void testIndependentWarmExtension()
     const auto *radioB = bme280ProfileForNode(0x55667788);
     const auto *radioA = bme280ProfileForNode(0x11223344);
     assert(radioB && radioA);
-    // The new observation must not recalibrate the other physical sensor.
+    // Independent warm observations must not overwrite the earlier lower-temperature curve.
     for (float die = 20; die <= 55; die += .25f) {
         Bme280ThermalModel old(T_ECHO_BME280_THERMAL_POINTS, T_ECHO_BME280_THERMAL_POINT_COUNT);
         Bme280ThermalModel a(radioA->points, radioA->count);
-        near(a.update(0, die), old.update(0, die));
-        near(a.getHumidityGain(), old.getHumidityGain());
         if (die <= 40.333333f) {
+            near(a.update(0, die), old.update(0, die));
+            near(a.getHumidityGain(), old.getHumidityGain());
             Bme280ThermalModel b(radioB->points, radioB->count);
             near(b.update(0, die), old.update(0, die));
             near(b.getHumidityGain(), old.getHumidityGain());
@@ -151,12 +151,32 @@ static void testIndependentWarmExtension()
     near(m.barometric_pressure, 991.13f);
 
     Bme280ThermalModel middle(radioB->points, radioB->count);
-    near(middle.update(0, (40.333333f + 45.315f) / 2), (13.946667f + 16.87f) / 2);
-    near(middle.getHumidityGain(), (.989799f + .750614f) / 2);
+    near(middle.update(0, (43.129667f + 45.315f) / 2), (14.656667f + 16.87f) / 2);
+    near(middle.getHumidityGain(), (.867299f + .750614f) / 2);
     Bme280ThermalModel high(radioB->points, radioB->count);
     near(high.update(0, 60), 16.87f);
     near(high.getHumidityGain(), .750614f);
     assert(high.getRange() == 1);
+
+    // Each physical sensor has its own raw observation and RH calibration.
+    Bme280ThermalModel a(radioA->points, radioA->count);
+    const float heatA = a.update(0, 46.359667f);
+    auto calibrationA = radioA->calibration;
+    calibrationA.humidityGain *= a.getHumidityGain();
+    assert(correctBme280Sample({43.318333f, 25.831667f, 990.83f}, m, heatA, calibrationA));
+    near(m.temperature, 26.9f);
+    near(m.relative_humidity, 41, .01f);
+    assert(correctBme280Sample({42.318333f, 26.831667f, 989.83f}, m, heatA, calibrationA));
+    near(m.temperature, 25.9f);
+    assert(m.relative_humidity > 41);
+    near(m.barometric_pressure, 989.83f);
+    Bme280ThermalModel warmB(radioB->points, radioB->count);
+    const float heatB = warmB.update(0, 43.129667f);
+    calibration = radioB->calibration;
+    calibration.humidityGain *= warmB.getHumidityGain();
+    assert(correctBme280Sample({41.556667f, 20.878333f, 990.43f}, m, heatB, calibration));
+    near(m.temperature, 26.9f);
+    near(m.relative_humidity, 41, .01f);
 }
 
 int main()

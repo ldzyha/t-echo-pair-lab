@@ -236,6 +236,8 @@ int32_t ButtonThread::runOnce()
             waitingForLongPress = false;
 
             evt.inputEvent = _doublePress;
+            if (_doublePress == INPUT_BROKER_SEND_HEART)
+                evt.kbchar = 2;
             // evt.kbchar = _doublePress;
             this->notifyObservers(&evt);
             if (_doublePress != INPUT_BROKER_SEND_HEART)
@@ -249,6 +251,13 @@ int32_t ButtonThread::runOnce()
 
             // Reset combination tracking
             waitingForLongPress = false;
+
+            if (_triplePress == INPUT_BROKER_SEND_HEART) {
+                evt.inputEvent = INPUT_BROKER_SEND_HEART;
+                evt.kbchar = multipressClickCount > 5 ? 5 : multipressClickCount;
+                this->notifyObservers(&evt);
+                break;
+            }
 
             switch (multipressClickCount) {
             case 3:
