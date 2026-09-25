@@ -83,6 +83,22 @@ def main():
             "test/custom_audit/test_quick_heart.cpp",
             f"{lib}/OneButton/src/OneButton.cpp",
         ]
+        suites["heart_spacing"] = [
+            "-Itest/custom_audit/test_emote_stubs",
+            "-Isrc/mesh/generated",
+            f"-I{lib}/Nanopb",
+            "test/custom_audit/test_heart_spacing.cpp",
+            "src/graphics/EmoteRenderer.cpp",
+            "src/graphics/emotes.cpp",
+        ]
+        suites["message_layout"] = [
+            "-Itest/custom_audit/test_emote_stubs",
+            "-Isrc/mesh/generated",
+            f"-I{lib}/Nanopb",
+            "test/custom_audit/test_message_layout.cpp",
+            "src/graphics/EmoteRenderer.cpp",
+            "src/graphics/emotes.cpp",
+        ]
         suites["delivery_module"] = [
             "-Itest/custom_audit/test_delivery_stubs",
             "test/custom_audit/test_delivery_module.cpp",

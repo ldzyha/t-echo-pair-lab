@@ -33,7 +33,8 @@ size_t utf8CharLen(uint8_t c)
 
 static inline bool isPossibleEmoteLead(uint8_t c)
 {
-    // All supported emoji labels in emotes.cpp are currently in these UTF-8 lead ranges.
+    // All supported emoji labels in emotes.cpp are currently in these UTF-8 lead
+    // ranges.
     return c == 0xE2 || c == 0xF0;
 }
 
@@ -210,6 +211,8 @@ static LineMetrics analyzeLineInternal(OLEDDisplay *display, const char *line, s
         }
 
         const size_t charLen = utf8CharLen(static_cast<uint8_t>(line[i]));
+        if (charLen > lineLen - i)
+            break;
         if (display)
             metrics.width += getUtf8ChunkWidth(display, line + i, charLen);
         i += charLen;
@@ -258,13 +261,13 @@ static int appendTextSpanAndMeasure(OLEDDisplay *display, int cursorX, int fontY
         size_t chunkLen = 0;
         while (pos + chunkLen < len) {
             const size_t charLen = utf8CharLen(static_cast<uint8_t>(text[pos + chunkLen]));
-            if (chunkLen + charLen >= sizeof(chunk))
+            if (charLen > len - pos - chunkLen || chunkLen + charLen >= sizeof(chunk))
                 break;
             chunkLen += charLen;
         }
 
         if (chunkLen == 0) {
-            chunkLen = std::min(len - pos, sizeof(chunk) - 1);
+            break;
         }
 
         memcpy(chunk, text + pos, chunkLen);
@@ -329,6 +332,8 @@ size_t truncateToWidth(OLEDDisplay *display, const char *line, char *out, size_t
             }
 
             const size_t charLen = utf8CharLen(static_cast<uint8_t>(line[i]));
+            if (charLen > lineLen - i)
+                break;
             tokenWidth = getUtf8ChunkWidth(display, line + i, charLen);
             advance = charLen;
         }
@@ -381,6 +386,8 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const char *line, 
     bool inBold = false;
 
     for (size_t i = 0; i < lineLen;) {
+        if (utf8CharLen(static_cast<uint8_t>(line[i])) > lineLen - i)
+            break;
         // Toggle faux bold.
         if (fauxBold && i + 1 < lineLen && line[i] == '*' && line[i + 1] == '*') {
             inBold = !inBold;
@@ -417,7 +424,10 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const char *line, 
             if (findEmoteAt(line, lineLen, next, nextMatchLen, emoteSet, emoteCount) != nullptr)
                 break;
 
-            next += utf8CharLen(static_cast<uint8_t>(line[next]));
+            const size_t charLen = utf8CharLen(static_cast<uint8_t>(line[next]));
+            if (charLen > lineLen - next)
+                break;
+            next += charLen;
         }
 
         if (next == i)

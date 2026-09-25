@@ -5,6 +5,8 @@
 namespace graphics
 {
 
+const unsigned char em_space[] PROGMEM = {0x00, 0x00};
+
 // Always define Emote list and count
 const Emote emotes[] = {
 #ifndef EXCLUDE_EMOJI
@@ -95,6 +97,7 @@ const Emote emotes[] = {
     {"\U0001F916", robo, robo_width, robo_height},    // 🤖 Robot Face
 
     // --- Hearts (Multiple Unicode Aliases) ---
+    {"\u2003", em_space, 13, 1},                        // Wide whitespace: 14 px including emote spacing.
     {"\u2665", heart, heart_width, heart_height},       // ♥ Black Heart Suit
     {"\u2665\uFE0F", heart, heart_width, heart_height}, // ♥️ Black Heart Suit (emoji presentation)
     {"\u2764\uFE0F", heart, heart_width, heart_height}, // ❤️ Red Heart

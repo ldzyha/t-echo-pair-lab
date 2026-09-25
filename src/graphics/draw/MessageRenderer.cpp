@@ -1,6 +1,7 @@
 #include "configuration.h"
 #if HAS_SCREEN
 #include "MessageRenderer.h"
+#include "graphics/draw/MessageLineLayout.h"
 
 // Core includes
 #include "MessageStore.h"
@@ -436,23 +437,28 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     }
 
     // Build lines for filtered messages (newest first)
-    std::vector<std::string> allLines;
+    cachedLines.clear();
+    auto &allLines = cachedLines;
     std::vector<bool> isMine;   // track alignment
     std::vector<bool> isHeader; // track header lines
     std::vector<AckStatus> ackForLine;
-    // Hard limit on total cached lines to prevent unbounded growth from a single long message.
-    // Reserve to the actual cache cap up front, because a single message can expand to many more
-    // wrapped display lines than a small per-message estimate would predict. For a display
-    // rendering only ~5-30 lines at a time, caching more than this limit wastes heap. Stop
-    // appending once we reach MAX_CACHED_LINES to prevent a single message from blowing out the
-    // heap.
-    constexpr size_t MAX_CACHED_LINES = 100U; // ~5-6KB for std::string overhead on 32-bit (if each ~50-60 bytes avg)
+    // Hard limit on total cached lines to prevent unbounded growth from a single
+    // long message. Reserve to the actual cache cap up front, because a single
+    // message can expand to many more wrapped display lines than a small
+    // per-message estimate would predict. For a display rendering only ~5-30
+    // lines at a time, caching more than this limit wastes heap. Stop appending
+    // once we reach MAX_CACHED_LINES to prevent a single message from blowing out
+    // the heap.
+    constexpr size_t MAX_CACHED_LINES = 100U; // ~5-6KB for std::string overhead on 32-bit (if each ~50-60 bytes
+                                              // avg)
     allLines.reserve(MAX_CACHED_LINES);
     isMine.reserve(MAX_CACHED_LINES);
     isHeader.reserve(MAX_CACHED_LINES);
     ackForLine.reserve(MAX_CACHED_LINES);
 
     for (auto it = filtered.rbegin(); it != filtered.rend(); ++it) {
+        if (allLines.size() >= MAX_CACHED_LINES)
+            break;
         const auto &m = *it;
 
         // Channel / destination labeling
@@ -543,7 +549,8 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
             snprintf(senderName, sizeof(senderName), "(%08x)", m.sender);
         }
 
-        // If this is *our own* message, override senderName to who the recipient was
+        // If this is *our own* message, override senderName to who the recipient
+        // was
         bool mine = (m.sender == nodeDB->getNodeNum());
         if (mine && node_recipient && node_recipient->has_user) {
             if (node_recipient->user.long_name[0]) {
@@ -554,7 +561,8 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
                 senderName[sizeof(senderName) - 1] = '\0';
             }
         }
-        // If recipient info is missing/empty, prefer a recipient identifier for outbound messages.
+        // If recipient info is missing/empty, prefer a recipient identifier for
+        // outbound messages.
         if (mine && (!node_recipient || !node_recipient->has_user ||
                      (!node_recipient->user.long_name[0] && !node_recipient->user.short_name[0]))) {
             snprintf(senderName, sizeof(senderName), "(%08x)", m.dest);
@@ -594,13 +602,15 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 
         int wrapWidth = mine ? rightTextWidth : leftTextWidth;
         std::vector<std::string> wrapped = generateLines(display, "", msgText, wrapWidth);
-        // Per-message wrap-line limit: even if wrapping produces many lines, cap them to prevent
-        // a single long message from consuming most or all of the cache.
+        // Per-message wrap-line limit: even if wrapping produces many lines, cap
+        // them to prevent a single long message from consuming most or all of the
+        // cache.
         constexpr size_t MAX_WRAPPED_LINES_PER_MSG = 20U;
         size_t wrappedCount = 0;
         for (auto &ln : wrapped) {
             if (allLines.size() >= MAX_CACHED_LINES || wrappedCount >= MAX_WRAPPED_LINES_PER_MSG)
-                break; // Cache limit or per-message limit reached; stop adding lines from this message
+                break; // Cache limit or per-message limit reached; stop adding lines
+                       // from this message
             allLines.emplace_back(std::move(ln));
             isMine.push_back(mine);
             isHeader.push_back(false);
@@ -610,7 +620,6 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     }
 
     // Cache lines and heights
-    cachedLines.swap(allLines);
     cachedHeights = calculateLineHeights(cachedLines, emotes, isHeader);
 
     std::vector<MessageBlock> blocks = buildMessageBlocks(isHeader, isMine);
@@ -755,16 +764,20 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
                 const int bh = bubbleH;
 
                 // Draw the 4 corner arcs using drawCircleQuads
-                display->drawCircleQuads(bx + r, by + r, r, 0x2);                   // Top-left
-                display->drawCircleQuads(bx + bw - r - 1, by + r, r, 0x1);          // Top-right
-                display->drawCircleQuads(bx + r, by + bh - r - 1, r, 0x4);          // Bottom-left
-                display->drawCircleQuads(bx + bw - r - 1, by + bh - r - 1, r, 0x8); // Bottom-right
+                display->drawCircleQuads(bx + r, by + r, r, 0x2);          // Top-left
+                display->drawCircleQuads(bx + bw - r - 1, by + r, r, 0x1); // Top-right
+                display->drawCircleQuads(bx + r, by + bh - r - 1, r,
+                                         0x4); // Bottom-left
+                display->drawCircleQuads(bx + bw - r - 1, by + bh - r - 1, r,
+                                         0x8); // Bottom-right
 
                 // Draw the 4 edges between corners
-                display->drawHorizontalLine(bx + r, by, bw - 2 * r);          // Top edge
-                display->drawHorizontalLine(bx + r, by + bh - 1, bw - 2 * r); // Bottom edge
-                display->drawVerticalLine(bx, by + r, bh - 2 * r);            // Left edge
-                display->drawVerticalLine(bx + bw - 1, by + r, bh - 2 * r);   // Right edge
+                display->drawHorizontalLine(bx + r, by, bw - 2 * r); // Top edge
+                display->drawHorizontalLine(bx + r, by + bh - 1,
+                                            bw - 2 * r);           // Bottom edge
+                display->drawVerticalLine(bx, by + r, bh - 2 * r); // Left edge
+                display->drawVerticalLine(bx + bw - 1, by + r,
+                                          bh - 2 * r); // Right edge
             } else if (bubbleW > 1 && bubbleH > 1) {
                 // Fallback to simple rectangle for very small bubbles
                 display->drawRect(bubbleX, topY, bubbleW, bubbleH);
@@ -828,6 +841,20 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
                 if (isMine[i]) {
                     // Calculate actual rendered width including emotes
                     int renderedWidth = getRenderedLineWidth(display, cachedLines[i], emotes, numEmotes);
+                    // Preserve one left edge for all rows of a spaced heart inside an
+                    // outgoing bubble.
+                    if (cachedLines[i].find(u8"\u2003") != std::string::npos && cachedLines[i].find(u8"❤") != std::string::npos) {
+                        for (const auto &block : blocks) {
+                            if (i < block.start || i > block.end || block.end >= cachedLines.size())
+                                continue;
+                            for (size_t j = block.start; j <= block.end; ++j) {
+                                if (!isHeader[j])
+                                    renderedWidth =
+                                        std::max(renderedWidth, getRenderedLineWidth(display, cachedLines[j], emotes, numEmotes));
+                            }
+                            break;
+                        }
+                    }
                     int rightX = (SCREEN_WIDTH - SCROLLBAR_WIDTH - RIGHT_MARGIN) - renderedWidth - (showBubbles ? textIndent : 0);
                     if (rightX < LEFT_MARGIN)
                         rightX = LEFT_MARGIN;
@@ -852,15 +879,17 @@ std::vector<std::string> generateLines(OLEDDisplay *display, const char *headerS
 {
     std::vector<std::string> lines;
 
-    // Only push headerStr if it's not empty (prevents extra blank line after headers)
+    // Only push headerStr if it's not empty (prevents extra blank line after
+    // headers)
     if (headerStr && headerStr[0] != '\0') {
         lines.push_back(std::string(headerStr));
     }
 
     std::string line, word;
-    for (int i = 0; messageBuf[i]; ++i) {
+    const size_t messageLen = strlen(messageBuf);
+    for (size_t i = 0; i < messageLen; ++i) {
         char ch = messageBuf[i];
-        if ((unsigned char)messageBuf[i] == 0xE2 && (unsigned char)messageBuf[i + 1] == 0x80 &&
+        if (messageLen - i >= 3 && (unsigned char)messageBuf[i] == 0xE2 && (unsigned char)messageBuf[i + 1] == 0x80 &&
             (unsigned char)messageBuf[i + 2] == 0x99) {
             ch = '\''; // plain apostrophe
             i += 2;    // skip over the extra UTF-8 bytes
@@ -876,7 +905,14 @@ std::vector<std::string> generateLines(OLEDDisplay *display, const char *headerS
             line += word + ' ';
             word.clear();
         } else {
-            word += ch;
+            const size_t charLen = graphics::EmoteRenderer::utf8CharLen(static_cast<uint8_t>(ch));
+            if (charLen > messageLen - i)
+                break;
+            if (charLen == 1)
+                word += ch;
+            else
+                word.append(messageBuf + i, charLen);
+            i += charLen - 1;
             std::string test = line + word;
             uint16_t strWidth = graphics::UIRenderer::measureStringWithEmotes(display, test.c_str());
             if (strWidth > textWidth) {
@@ -898,61 +934,7 @@ std::vector<std::string> generateLines(OLEDDisplay *display, const char *headerS
 std::vector<int> calculateLineHeights(const std::vector<std::string> &lines, const Emote *emotes,
                                       const std::vector<bool> &isHeaderVec)
 {
-    // Tunables for layout control
-    constexpr int HEADER_UNDERLINE_GAP = 0; // space between underline and first body line
-    constexpr int HEADER_UNDERLINE_PIX = 1; // underline thickness (1px row drawn)
-    constexpr int BODY_LINE_LEADING = -4;   // default vertical leading for normal body lines
-    constexpr int EMOTE_PADDING_ABOVE = 4;  // space above emote line (added to line above)
-    constexpr int EMOTE_PADDING_BELOW = 3;  // space below emote line (added to emote line)
-
-    std::vector<int> rowHeights;
-    rowHeights.reserve(lines.size());
-    std::vector<graphics::EmoteRenderer::LineMetrics> lineMetrics;
-    lineMetrics.reserve(lines.size());
-
-    for (const auto &line : lines) {
-        lineMetrics.push_back(graphics::EmoteRenderer::analyzeLine(nullptr, line, FONT_HEIGHT_SMALL, emotes, numEmotes));
-    }
-
-    for (size_t idx = 0; idx < lines.size(); ++idx) {
-        const int baseHeight = FONT_HEIGHT_SMALL;
-        int lineHeight = baseHeight;
-
-        const int tallestEmote = lineMetrics[idx].tallestHeight;
-        const bool hasEmote = lineMetrics[idx].hasEmote;
-        const bool nextHasEmote = (idx + 1 < lines.size()) && lineMetrics[idx + 1].hasEmote;
-
-        if (isHeaderVec[idx]) {
-            // Header line spacing
-            lineHeight = baseHeight + HEADER_UNDERLINE_PIX + HEADER_UNDERLINE_GAP;
-        } else {
-            // Base spacing for normal lines
-            int desiredBody = baseHeight + BODY_LINE_LEADING;
-
-            if (hasEmote) {
-                // Emote line: add overshoot + bottom padding
-                int overshoot = std::max(0, tallestEmote - baseHeight);
-                lineHeight = desiredBody + overshoot + EMOTE_PADDING_BELOW;
-            } else {
-                // Regular line: no emote → standard spacing
-                lineHeight = desiredBody;
-
-                // If next line has an emote → add top padding *here*
-                if (nextHasEmote) {
-                    lineHeight += EMOTE_PADDING_ABOVE;
-                }
-            }
-
-            // Add block gap if next is a header
-            if (idx + 1 < lines.size() && isHeaderVec[idx + 1]) {
-                lineHeight += MESSAGE_BLOCK_GAP;
-            }
-        }
-
-        rowHeights.push_back(lineHeight);
-    }
-
-    return rowHeights;
+    return graphics::MessageLineLayout::calculate(lines, isHeaderVec, FONT_HEIGHT_SMALL, MESSAGE_BLOCK_GAP, emotes, numEmotes);
 }
 
 void handleNewMessage(OLEDDisplay *display, const StoredMessage &sm, const meshtastic_MeshPacket &packet)
@@ -1047,7 +1029,8 @@ void handleNewMessage(OLEDDisplay *display, const StoredMessage &sm, const mesht
                 strcpy(banner, "New Message");
         }
 
-        // Append context (which channel or DM) so the banner shows where the message arrived
+        // Append context (which channel or DM) so the banner shows where the
+        // message arrived
         {
             char contextBuf[64] = "";
             if (sm.type == MessageType::BROADCAST) {
@@ -1081,7 +1064,8 @@ void handleNewMessage(OLEDDisplay *display, const StoredMessage &sm, const mesht
         screen->showSimpleBanner(banner, inThread ? 1000 : 3000);
     }
 
-    // Always focus into the correct conversation thread when a message with real text arrives
+    // Always focus into the correct conversation thread when a message with real
+    // text arrives
     const char *msgText = MessageStore::getText(sm);
     if (msgText && msgText[0] != '\0') {
         setThreadFor(sm, packet);

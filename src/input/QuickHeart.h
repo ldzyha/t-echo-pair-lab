@@ -9,10 +9,14 @@ namespace QuickHeart
 constexpr uint16_t CLICK_WINDOW_MS = 400;
 constexpr int16_t DEBOUNCE_MS = 30;
 constexpr char TEXT[] = u8"\u2764\uFE0F";
-constexpr char SMALL[] = u8"❤❤ ❤❤\n ❤ ❤\n  ❤";
-constexpr char MEDIUM[] = u8" ❤❤   ❤❤\n❤  ❤ ❤  ❤\n ❤  ❤  ❤\n  ❤   ❤\n    ❤";
-constexpr char LARGE[] = u8"  ❤❤     ❤❤\n ❤  ❤   ❤  ❤\n❤    ❤ ❤    ❤\n❤     ❤     ❤\n ❤         ❤\n   ❤     ❤\n      ❤";
-static_assert(sizeof(LARGE) - 1 <= 192, "Keep the outlined heart inside the paired encrypted payload limit");
+constexpr char SMALL[] = u8"❤❤\u2003 ❤❤\n\u2003 ❤\u2003 ❤\n\u2003\u2003  ❤";
+constexpr char MEDIUM[] = u8"\u2003 ❤\u2003\u2003\u2003   ❤\n❤\u2003 ❤\u2003 ❤\u2003 ❤\n❤\u2003\u2003\u2003\u2003\u2003\u2003 "
+                          u8"❤\n\u2003 ❤\u2003\u2003\u2003   ❤\n\u2003\u2003\u2003   ❤";
+constexpr char LARGE[] =
+    u8"\u2003   ❤❤\u2003\u2003  ❤❤\n❤\u2003\u2003 ❤\u2003 ❤\u2003\u2003 ❤\n❤\u2003\u2003\u2003\u2003\u2003\u2003\u2003\u2003  "
+    u8"❤\n\u2003 ❤\u2003\u2003\u2003\u2003\u2003\u2003❤\n\u2003\u2003  ❤\u2003\u2003\u2003  ❤\n\u2003\u2003\u2003   ❤\u2003 "
+    u8"❤\n\u2003\u2003\u2003\u2003\u2003❤";
+static_assert(sizeof(LARGE) - 1 <= 187, "Keep room for the encrypted envelope and decoded destination");
 
 inline const char *textFor(unsigned clicks)
 {
